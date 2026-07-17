@@ -518,6 +518,16 @@
               <FilePath>.\APP\agriculture\app_state.c</FilePath>
             </File>
             <File>
+              <FileName>plant_assets_builtin.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\APP\agriculture\plant_assets_builtin.c</FilePath>
+            </File>
+            <File>
+              <FileName>asset_service.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\APP\agriculture\asset_service.c</FilePath>
+            </File>
+            <File>
               <FileName>protocol.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\APP\agriculture\protocol.c</FilePath>

@@ -97,6 +97,8 @@ MVP 不要求高频心跳。建议连接空闲 10 秒以上再发送，连续多
 
 ## 6. AI 请求
 
+### 6.1 兼容请求
+
 STM32 发送：
 
 ```text
@@ -119,15 +121,54 @@ V1|AI_REQ|REQ_ID|T|H|LIGHT|LIGHT_LEVEL
 V1|AI_REQ|42|31|39|82|STRONG
 ```
 
+该格式继续保留用于回退和旧固件兼容。电脑网关收到该格式时按以下默认身份处理：
+
+```text
+DEVICE_ID = GM001
+SPECIES_ID = pothos
+```
+
+### 6.2 带植物身份的请求
+
+GreenMind 当前固件默认发送：
+
+```text
+V1|PLANT_AI_REQ|REQ_ID|DEVICE_ID|SPECIES_ID|T|H|LIGHT|LIGHT_LEVEL
+```
+
+示例：
+
+```text
+V1|PLANT_AI_REQ|42|GM001|pothos|31|39|82|STRONG
+```
+
+规则：
+
+- `DEVICE_ID` 为 1～16 个大写字母、数字、下划线或连字符；
+- `SPECIES_ID` 为 1～16 个小写 ASCII 字母、数字或下划线，首字符必须为字母；
+- 当前默认设备为 `GM001`；
+- 当前默认植物为 `pothos`，TFT 显示名为 `POTHOS`；
+- 网关必须先确认设备和植物存在，再查询 SQLite 植物档案；
+- 网关根据植物档案进行确定性适配计算，模型不得覆盖规则状态码；
+- 未知植物返回 `PLANT_NOT_FOUND`；
+- 未知设备返回 `DEVICE_NOT_FOUND`；
+- 数据库异常返回 `DATABASE_ERROR`。
+
 网关通过基本校验并开始处理后立即回复：
 
 ```text
 V1|ACK|42|AI_REQ
 ```
 
+带植物身份的请求回复：
+
+```text
+V1|ACK|42|PLANT_AI_REQ
+```
+
 ACK 只表示网关接收请求，不表示模型分析完成。
 
-### 6.1 模型调用阶段
+### 6.3 模型调用阶段
 
 网关在调用过程中发送：
 
@@ -297,3 +338,6 @@ AT_COMMAND
 - 不兼容修改升级为 `V2`；
 - 后续可增加 `SOIL`、植物类型和设备编号；
 - 后续若引入手机 App 或云端，只替换网关传输实现，不修改传感器和水泵业务模块。
+
+`PLANT_AI_REQ` 是兼容扩展，没有改变现有帧头、结果帧和安全边界，因此继续使用
+`V1`。若未来改变分帧方式或结果字段顺序，再升级为 `V2`。

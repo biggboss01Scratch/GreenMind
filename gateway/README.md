@@ -35,6 +35,45 @@ DONE / ERROR / TIMEOUT
 
 电脑端额外显示完整英文建议；STM32 只接收经过白名单校验的英文状态、问题、浇水建议和建议码。
 
+## 植物数据库和像素资源
+
+生成 6 种植物、3 种状态的 18 张 48×48 像素图片：
+
+```powershell
+python .\tools\generate_plant_assets.py
+```
+
+图片同时输出为 PNG 预览和大端字节序的原始 `RGB565_BE`。资源清单位于
+`assets/plants/manifest.json`，其中包含字节数、CRC32 和 SHA-256。
+
+创建或重建本地 SQLite：
+
+```powershell
+python .\tools\init_database.py --reset
+```
+
+默认数据库位置为 `data/greenmind.sqlite3`。运行库属于本地生成文件，不提交
+Git；`database/schema.sql`、`database/seed_plants.json`、资源文件和初始化脚本
+会提交，因此任何电脑都可以得到一致的数据库。
+
+当前数据库层已经可以：
+
+- 查询全部、内置或在线植物；
+- 查询温度、空气湿度和 0～100 相对光照偏好；
+- 查询每种植物的三种像素状态图；
+- 保存设备当前植物；
+- 保存带植物身份的 AI 分析记录。
+
+当前固件使用默认设备 `GM001` 和默认植物 `pothos` 发送：
+
+```text
+V1|PLANT_AI_REQ|REQ_ID|GM001|pothos|T|H|LIGHT|LIGHT_LEVEL
+```
+
+网关查询 SQLite 档案，先用确定性规则计算温度、空气湿度和相对光照适配性，
+再把植物档案和规则结果交给 Mock 或 DeepSeek。模型只能解释结果，不能覆盖
+规则状态码。旧的 `V1|AI_REQ|...` 仍按 `GM001/pothos` 兼容处理。
+
 ## 单元测试
 
 ```powershell

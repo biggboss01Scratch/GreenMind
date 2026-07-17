@@ -4,6 +4,7 @@
 #include "app_config.h"
 #include "app_state.h"
 #include "protocol.h"
+#include "asset_service.h"
 #include "sensor_service.h"
 #include "key_service.h"
 #include "touch_service.h"
@@ -384,14 +385,177 @@ static u8 App_AiActive(const AppState *app)
 	        app->ai_state==APP_AI_THINKING || app->ai_state==APP_AI_VALIDATING)?1:0;
 }
 
+static void App_ClearPlantItems(AppState *app)
+{
+	u8 i;
+	app->plant_list_count=0;
+	for(i=0;i<APP_PLANT_LIST_MAX;i++)
+	{
+		app->plant_items[i].valid=0;
+		app->plant_items[i].species_id[0]='\0';
+		app->plant_items[i].display_name[0]='\0';
+		app->plant_items[i].source_type[0]='\0';
+	}
+}
+
+static void App_ResetAiForPlant(AppState *app)
+{
+	app->ai_state=APP_AI_IDLE;
+	app->ai_wait_ticks=0;
+	AppState_CopyText(app->ai_status,sizeof(app->ai_status),"IDLE");
+	AppState_CopyText(app->ai_issue,sizeof(app->ai_issue),"-");
+	AppState_CopyText(app->ai_watering,sizeof(app->ai_watering),"-");
+	AppState_CopyText(app->ai_advice,sizeof(app->ai_advice),"-");
+}
+
+static u8 App_QueuePlantListRequest(const AppState *app)
+{
+	u8 frame[WIFI_TCP_TX_BUFFER_SIZE];
+	u16 length;
+	length=Protocol_BuildPlantListRequest(frame,sizeof(frame),app->device_id);
+	if(length==0)return 0;
+	return AppTx_Enqueue(frame,length);
+}
+
+static const char *App_DesiredAssetState(const AppState *app)
+{
+	if(app->ai_state==APP_AI_DONE)
+	{
+		if(strcmp(app->ai_status,"DANGER")==0)return "DANGER";
+		if(strcmp(app->ai_status,"WARN")==0)return "ATTENTION";
+	}
+	return "NORMAL";
+}
+
+static void App_SetBuiltInAsset(AppState *app,const char *state)
+{
+	AssetService_Cancel("BUILTIN ACTIVE");
+	AppState_CopyText(app->asset_status,sizeof(app->asset_status),"BUILTIN");
+	AppState_CopyText(app->asset_species_id,sizeof(app->asset_species_id),
+	                  "pothos");
+	AppState_CopyText(app->asset_state,sizeof(app->asset_state),state);
+	AppState_CopyText(app->asset_error,sizeof(app->asset_error),"NONE");
+	app->asset_retry_count=0;
+	app->asset_revision++;
+	app->ui_dirty=1;
+}
+
+static u8 App_StartAssetRequest(AppState *app,const char *state,u8 reset_retry)
+{
+	u8 frame[WIFI_TCP_TX_BUFFER_SIZE];
+	u16 length;
+
+	if(strcmp(app->species_id,"pothos")==0)
+	{
+		App_SetBuiltInAsset(app,state);
+		return 1;
+	}
+	if(strcmp(app->species_id,"cactus")!=0)
+	{
+		AssetService_Cancel("CACTUS TEST ONLY");
+		AppState_CopyText(app->asset_status,sizeof(app->asset_status),
+		                  "PLACEHOLDER");
+		AppState_CopyText(app->asset_species_id,
+		                  sizeof(app->asset_species_id),app->species_id);
+		AppState_CopyText(app->asset_state,sizeof(app->asset_state),state);
+		AppState_CopyText(app->asset_error,sizeof(app->asset_error),
+		                  "CACTUS TEST ONLY");
+		app->asset_retry_count=0;
+		app->asset_revision++;
+		app->ui_dirty=1;
+		return 1;
+	}
+	if(!app->gateway_ready)
+	{
+		AppState_CopyText(app->asset_status,sizeof(app->asset_status),"ERROR");
+		AppState_CopyText(app->asset_error,sizeof(app->asset_error),
+		                  "GATEWAY OFFLINE");
+		app->asset_revision++;
+		app->ui_dirty=1;
+		return 0;
+	}
+	if((AssetService_GetState()==ASSET_TRANSFER_REQUESTING ||
+	    AssetService_GetState()==ASSET_TRANSFER_RECEIVING) &&
+	   strcmp(AssetService_GetSpeciesId(),app->species_id)==0 &&
+	   strcmp(AssetService_GetAssetState(),state)==0)
+		return 1;
+	if(AssetService_HasImage(app->species_id,state))
+	{
+		AppState_CopyText(app->asset_status,sizeof(app->asset_status),"READY");
+		AppState_CopyText(app->asset_species_id,sizeof(app->asset_species_id),
+		                  app->species_id);
+		AppState_CopyText(app->asset_state,sizeof(app->asset_state),state);
+		AppState_CopyText(app->asset_error,sizeof(app->asset_error),"NONE");
+		app->asset_revision++;
+		app->ui_dirty=1;
+		return 1;
+	}
+
+	app->asset_request_id++;
+	length=Protocol_BuildAssetRequest(frame,sizeof(frame),app->asset_request_id,
+	                                  app->species_id,state);
+	if(length==0 || !AppTx_Enqueue(frame,length))
+	{
+		AppState_CopyText(app->asset_status,sizeof(app->asset_status),"ERROR");
+		AppState_CopyText(app->asset_error,sizeof(app->asset_error),
+		                  "ASSET TX FULL");
+		app->asset_revision++;
+		app->ui_dirty=1;
+		return 0;
+	}
+	if(reset_retry)app->asset_retry_count=0;
+	AssetService_StartRequest(app->asset_request_id,app->species_id,state);
+	AppState_CopyText(app->asset_status,sizeof(app->asset_status),"LOADING");
+	AppState_CopyText(app->asset_species_id,sizeof(app->asset_species_id),
+	                  app->species_id);
+	AppState_CopyText(app->asset_state,sizeof(app->asset_state),state);
+	AppState_CopyText(app->asset_error,sizeof(app->asset_error),"NONE");
+	app->asset_revision++;
+	app->ui_dirty=1;
+	printf("[ASSET] REQUEST id=%u species=%s state=%s retry=%u\r\n",
+	       (unsigned int)app->asset_request_id,app->species_id,state,
+	       (unsigned int)app->asset_retry_count);
+	return 1;
+}
+
+static void App_HandleAssetFailure(AppState *app,const char *error)
+{
+	char state[APP_STATE_TEXT_SMALL];
+	AppState_CopyText(state,sizeof(state),AssetService_GetAssetState());
+	if(app->gateway_ready && app->asset_retry_count<1 &&
+	   strcmp(app->species_id,"pothos")!=0 && state[0]!='\0')
+	{
+		app->asset_retry_count++;
+		printf("[ASSET] RETRY error=%s\r\n",error);
+		if(App_StartAssetRequest(app,state,0))return;
+	}
+	AppState_CopyText(app->asset_status,sizeof(app->asset_status),"ERROR");
+	AppState_CopyText(app->asset_error,sizeof(app->asset_error),error);
+	AppState_CopyText(app->last_error,sizeof(app->last_error),error);
+	app->asset_revision++;
+	app->ui_dirty=1;
+	printf("[ASSET] ERROR %s\r\n",error);
+}
+
 static void App_HandleProtocolEvent(AppState *app,const ProtocolEvent *event)
 {
+	u8 i;
 	if(event->type==PROTOCOL_EVENT_HELLO_ACK)
 	{
 		app->gateway_ready=1;
 		AppState_CopyText(app->last_error,sizeof(app->last_error),"NONE");
 		app->ui_dirty=1;
 		printf("[GATEWAY] READY\r\n");
+		App_ClearPlantItems(app);
+		app->plant_list_state=APP_PLANT_DATA_LOADING;
+		if(App_QueuePlantListRequest(app))
+			printf("[PLANT] STARTUP SYNC device=%s\r\n",app->device_id);
+		else
+		{
+			app->plant_list_state=APP_PLANT_DATA_ERROR;
+			AppState_CopyText(app->plant_error,sizeof(app->plant_error),
+			                  "SYNC QUEUE FAILED");
+		}
 	}
 	else if(event->type==PROTOCOL_EVENT_PING)
 		AppTx_EnqueueText("V1|PONG\r\n");
@@ -420,8 +584,188 @@ static void App_HandleProtocolEvent(AppState *app,const ProtocolEvent *event)
 		app->ai_wait_ticks=0;
 		app->page=APP_PAGE_AI;
 		App_SetAiState(app,APP_AI_DONE);
+		App_StartAssetRequest(app,App_DesiredAssetState(app),1);
 		printf("[AI] RESULT status=%s issue=%s water=%s advice=%s\r\n",
 		       event->status,event->issue,event->watering,event->advice);
+	}
+	else if(event->type==PROTOCOL_EVENT_PLANT_LIST_BEGIN)
+	{
+		App_ClearPlantItems(app);
+		app->plant_list_expected=event->item_count;
+		if(app->plant_list_expected>APP_PLANT_LIST_MAX)
+			app->plant_list_expected=APP_PLANT_LIST_MAX;
+		app->plant_list_state=APP_PLANT_DATA_LOADING;
+		AppState_CopyText(app->plant_error,sizeof(app->plant_error),"NONE");
+		if(strcmp(app->species_id,event->species_id)!=0)
+		{
+			AppState_CopyText(app->species_id,sizeof(app->species_id),
+			                  event->species_id);
+			AppState_CopyText(app->plant_name,sizeof(app->plant_name),
+			                  event->display_name);
+			App_ResetAiForPlant(app);
+			app->ui_dirty=1;
+			printf("[PLANT] CURRENT SYNC species=%s\r\n",app->species_id);
+			App_StartAssetRequest(app,"NORMAL",1);
+		}
+		printf("[PLANT] LIST BEGIN count=%u\r\n",
+		       (unsigned int)event->item_count);
+	}
+	else if(event->type==PROTOCOL_EVENT_PLANT_ITEM)
+	{
+		i=event->item_index;
+		if(i<APP_PLANT_LIST_MAX)
+		{
+			app->plant_items[i].valid=1;
+			AppState_CopyText(app->plant_items[i].species_id,
+			                  sizeof(app->plant_items[i].species_id),
+			                  event->species_id);
+			AppState_CopyText(app->plant_items[i].display_name,
+			                  sizeof(app->plant_items[i].display_name),
+			                  event->display_name);
+			AppState_CopyText(app->plant_items[i].source_type,
+			                  sizeof(app->plant_items[i].source_type),
+			                  event->source_type);
+			if((u8)(i+1)>app->plant_list_count)
+				app->plant_list_count=(u8)(i+1);
+		}
+	}
+	else if(event->type==PROTOCOL_EVENT_PLANT_LIST_END)
+	{
+		if(app->plant_list_count>0)
+		{
+			app->plant_list_state=APP_PLANT_DATA_READY;
+			AppState_CopyText(app->plant_error,sizeof(app->plant_error),"NONE");
+		}
+		else
+		{
+			app->plant_list_state=APP_PLANT_DATA_ERROR;
+			AppState_CopyText(app->plant_error,sizeof(app->plant_error),
+			                  "EMPTY PLANT LIST");
+		}
+		app->plant_ui_revision++;
+		app->ui_dirty=1;
+		App_StartAssetRequest(app,App_DesiredAssetState(app),1);
+		printf("[PLANT] LIST READY received=%u announced=%u\r\n",
+		       (unsigned int)app->plant_list_count,
+		       (unsigned int)event->item_count);
+	}
+	else if(event->type==PROTOCOL_EVENT_PLANT_DETAIL)
+	{
+		AppState_CopyText(app->plant_detail_species_id,
+		                  sizeof(app->plant_detail_species_id),
+		                  event->species_id);
+		AppState_CopyText(app->plant_detail_name,
+		                  sizeof(app->plant_detail_name),
+		                  event->display_name);
+		AppState_CopyText(app->plant_detail_source,
+		                  sizeof(app->plant_detail_source),
+		                  event->source_type);
+		app->plant_temp_min=event->temp_min;
+		app->plant_temp_max=event->temp_max;
+		app->plant_humidity_min=event->humidity_min;
+		app->plant_humidity_max=event->humidity_max;
+		app->plant_light_min=event->light_min;
+		app->plant_light_max=event->light_max;
+		app->plant_detail_state=APP_PLANT_DATA_READY;
+		app->plant_selection_pending=0;
+		AppState_CopyText(app->plant_error,sizeof(app->plant_error),"NONE");
+		app->plant_ui_revision++;
+		app->ui_dirty=1;
+		printf("[PLANT] DETAIL %s T=%u-%u H=%u-%u L=%u-%u\r\n",
+		       app->plant_detail_species_id,
+		       (unsigned int)app->plant_temp_min,
+		       (unsigned int)app->plant_temp_max,
+		       (unsigned int)app->plant_humidity_min,
+		       (unsigned int)app->plant_humidity_max,
+		       (unsigned int)app->plant_light_min,
+		       (unsigned int)app->plant_light_max);
+	}
+	else if(event->type==PROTOCOL_EVENT_PLANT_SELECTED)
+	{
+		AppState_CopyText(app->species_id,sizeof(app->species_id),
+		                  event->species_id);
+		AppState_CopyText(app->plant_name,sizeof(app->plant_name),
+		                  event->display_name);
+		app->plant_selection_pending=0;
+		AppState_CopyText(app->plant_error,sizeof(app->plant_error),"NONE");
+		AppState_CopyText(app->last_error,sizeof(app->last_error),"NONE");
+		App_ResetAiForPlant(app);
+		app->plant_ui_revision++;
+		app->page=APP_PAGE_HOME;
+		app->ui_dirty=1;
+		App_StartAssetRequest(app,"NORMAL",1);
+		printf("[PLANT] SELECTED device=%s species=%s\r\n",
+		       app->device_id,app->species_id);
+	}
+	else if(event->type==PROTOCOL_EVENT_PLANT_ERROR)
+	{
+		app->plant_selection_pending=0;
+		if(app->page==APP_PAGE_PLANT_LIBRARY)
+			app->plant_list_state=APP_PLANT_DATA_ERROR;
+		if(app->page==APP_PAGE_PLANT_PROFILE)
+			app->plant_detail_state=APP_PLANT_DATA_ERROR;
+		AppState_CopyText(app->plant_error,sizeof(app->plant_error),
+		                  event->error);
+		AppState_CopyText(app->last_error,sizeof(app->last_error),
+		                  event->error);
+		app->plant_ui_revision++;
+		app->ui_dirty=1;
+		printf("[PLANT] ERROR %s\r\n",event->error);
+	}
+	else if(event->type==PROTOCOL_EVENT_ASSET_BEGIN)
+	{
+		if(event->transfer_id!=AssetService_GetTransferId())
+			printf("[ASSET] IGNORE STALE BEGIN id=%u\r\n",
+			       (unsigned int)event->transfer_id);
+		else if(!AssetService_Begin(event->transfer_id,event->species_id,
+		                       event->asset_state,event->asset_width,
+		                       event->asset_height,event->byte_size,
+		                       event->chunk_count,event->crc32))
+			App_HandleAssetFailure(app,AssetService_GetError());
+		else
+			printf("[ASSET] BEGIN id=%u species=%s state=%s chunks=%u\r\n",
+			       (unsigned int)event->transfer_id,event->species_id,
+			       event->asset_state,(unsigned int)event->chunk_count);
+	}
+	else if(event->type==PROTOCOL_EVENT_ASSET_CHUNK)
+	{
+		if(event->transfer_id!=AssetService_GetTransferId())
+		{
+		}
+		else if(!AssetService_AppendChunk(event->transfer_id,event->sequence,
+		                             event->asset_hex))
+			App_HandleAssetFailure(app,AssetService_GetError());
+	}
+	else if(event->type==PROTOCOL_EVENT_ASSET_END)
+	{
+		if(event->transfer_id!=AssetService_GetTransferId())
+			printf("[ASSET] IGNORE STALE END id=%u\r\n",
+			       (unsigned int)event->transfer_id);
+		else if(AssetService_End(event->transfer_id,event->chunk_count,event->crc32))
+		{
+			AppState_CopyText(app->asset_status,sizeof(app->asset_status),"READY");
+			AppState_CopyText(app->asset_species_id,
+			                  sizeof(app->asset_species_id),
+			                  AssetService_GetSpeciesId());
+			AppState_CopyText(app->asset_state,sizeof(app->asset_state),
+			                  AssetService_GetAssetState());
+			AppState_CopyText(app->asset_error,sizeof(app->asset_error),"NONE");
+			AppState_CopyText(app->last_error,sizeof(app->last_error),"NONE");
+			app->asset_revision++;
+			app->ui_dirty=1;
+			printf("[ASSET] READY id=%u species=%s state=%s\r\n",
+			       (unsigned int)event->transfer_id,app->asset_species_id,
+			       app->asset_state);
+		}
+		else App_HandleAssetFailure(app,AssetService_GetError());
+	}
+	else if(event->type==PROTOCOL_EVENT_ASSET_ERROR)
+	{
+		if(event->transfer_id==AssetService_GetTransferId())
+		{
+			AssetService_Fail(event->transfer_id,event->error);
+			App_HandleAssetFailure(app,event->error);
+		}
 	}
 	else if(event->type==PROTOCOL_EVENT_ERROR &&
 	        (event->request_id==0 || event->request_id==app->ai_request_id))
@@ -445,7 +789,7 @@ static void AppTcp_Task(AppState *app)
 	u8 chunk[64];
 	u16 length;
 	u8 reads=0;
-	ProtocolEvent event;
+	static ProtocolEvent event;
 	static u16 previous_dropped=0;
 	static u16 previous_event_dropped=0;
 
@@ -471,6 +815,28 @@ static void AppTcp_Task(AppState *app)
 		g_hello_pending=0;
 		app->tcp_connected=0;
 		app->gateway_ready=0;
+		app->plant_selection_pending=0;
+		if(app->plant_list_state==APP_PLANT_DATA_LOADING)
+			app->plant_list_state=APP_PLANT_DATA_ERROR;
+		if(app->plant_detail_state==APP_PLANT_DATA_LOADING)
+			app->plant_detail_state=APP_PLANT_DATA_ERROR;
+		if(app->page==APP_PAGE_PLANT_LIBRARY ||
+		   app->page==APP_PAGE_PLANT_PROFILE)
+		{
+			AppState_CopyText(app->plant_error,sizeof(app->plant_error),
+			                  "GATEWAY LOST");
+			app->plant_ui_revision++;
+		}
+		if(AssetService_GetState()==ASSET_TRANSFER_REQUESTING ||
+		   AssetService_GetState()==ASSET_TRANSFER_RECEIVING)
+		{
+			AssetService_Cancel("GATEWAY LOST");
+			AppState_CopyText(app->asset_status,sizeof(app->asset_status),
+			                  "ERROR");
+			AppState_CopyText(app->asset_error,sizeof(app->asset_error),
+			                  "GATEWAY LOST");
+			app->asset_revision++;
+		}
 		if(App_AiActive(app))
 		{
 			AppState_CopyText(app->last_error,sizeof(app->last_error),"GATEWAY LOST");
@@ -551,9 +917,10 @@ static void App_RequestAi(AppState *app)
 	}
 
 	app->ai_request_id++;
-	length=Protocol_BuildAiRequest(frame,sizeof(frame),app->ai_request_id,
-	                              app->temperature,app->humidity,app->light,
-	                              AppState_LightLevel(app->light));
+	length=Protocol_BuildPlantAiRequest(frame,sizeof(frame),app->ai_request_id,
+	                                   app->device_id,app->species_id,
+	                                   app->temperature,app->humidity,app->light,
+	                                   AppState_LightLevel(app->light));
 	if(length==0 || !AppTx_Enqueue(frame,length))
 	{
 		AppState_CopyText(app->last_error,sizeof(app->last_error),"TX QUEUE FULL");
@@ -569,7 +936,8 @@ static void App_RequestAi(AppState *app)
 	AppState_CopyText(app->last_error,sizeof(app->last_error),"NONE");
 	app->ai_wait_ticks=APP_AI_TIMEOUT_TICKS;
 	App_SetAiState(app,APP_AI_SENDING);
-	printf("[AI] REQUEST T=%u H=%u L=%u %s\r\n",
+	printf("[AI] REQUEST device=%s plant=%s T=%u H=%u L=%u %s\r\n",
+	       app->device_id,app->species_id,
 	       (unsigned int)app->temperature,(unsigned int)app->humidity,
 	       (unsigned int)app->light,AppState_LightLevel(app->light));
 }
@@ -585,9 +953,113 @@ static void App_AiTimeoutTask(AppState *app)
 	}
 }
 
+static void App_SetPlantRequestError(AppState *app,AppPlantDataState *state,
+	                                  const char *error)
+{
+	*state=APP_PLANT_DATA_ERROR;
+	app->plant_selection_pending=0;
+	AppState_CopyText(app->plant_error,sizeof(app->plant_error),error);
+	AppState_CopyText(app->last_error,sizeof(app->last_error),error);
+	app->plant_ui_revision++;
+	app->ui_dirty=1;
+}
+
+static void App_RequestPlantList(AppState *app)
+{
+	app->page=APP_PAGE_PLANT_LIBRARY;
+	app->plant_list_state=APP_PLANT_DATA_LOADING;
+	app->plant_list_expected=0;
+	App_ClearPlantItems(app);
+	AppState_CopyText(app->plant_error,sizeof(app->plant_error),"NONE");
+	app->plant_ui_revision++;
+	app->ui_dirty=1;
+
+	if(!app->gateway_ready)
+	{
+		App_SetPlantRequestError(app,&app->plant_list_state,"GATEWAY OFFLINE");
+		return;
+	}
+	if(!App_QueuePlantListRequest(app))
+	{
+		App_SetPlantRequestError(app,&app->plant_list_state,"TX QUEUE FULL");
+		return;
+	}
+	printf("[PLANT] LIST REQUEST device=%s\r\n",app->device_id);
+}
+
+static void App_RequestPlantDetail(AppState *app,u8 index)
+{
+	u8 frame[WIFI_TCP_TX_BUFFER_SIZE];
+	u16 length;
+
+	if(index>=APP_PLANT_LIST_MAX || !app->plant_items[index].valid)return;
+	app->page=APP_PAGE_PLANT_PROFILE;
+	app->plant_detail_state=APP_PLANT_DATA_LOADING;
+	app->plant_selection_pending=0;
+	AppState_CopyText(app->plant_detail_species_id,
+	                  sizeof(app->plant_detail_species_id),
+	                  app->plant_items[index].species_id);
+	AppState_CopyText(app->plant_detail_name,sizeof(app->plant_detail_name),
+	                  app->plant_items[index].display_name);
+	AppState_CopyText(app->plant_detail_source,
+	                  sizeof(app->plant_detail_source),
+	                  app->plant_items[index].source_type);
+	AppState_CopyText(app->plant_error,sizeof(app->plant_error),"NONE");
+	app->plant_ui_revision++;
+	app->ui_dirty=1;
+
+	if(!app->gateway_ready)
+	{
+		App_SetPlantRequestError(app,&app->plant_detail_state,"GATEWAY OFFLINE");
+		return;
+	}
+	length=Protocol_BuildPlantDetailRequest(frame,sizeof(frame),
+	                                        app->plant_detail_species_id);
+	if(length==0 || !AppTx_Enqueue(frame,length))
+	{
+		App_SetPlantRequestError(app,&app->plant_detail_state,"TX QUEUE FULL");
+		return;
+	}
+	printf("[PLANT] DETAIL REQUEST species=%s\r\n",
+	       app->plant_detail_species_id);
+}
+
+static void App_SelectPlant(AppState *app)
+{
+	u8 frame[WIFI_TCP_TX_BUFFER_SIZE];
+	u16 length;
+
+	if(app->plant_detail_state!=APP_PLANT_DATA_READY ||
+	   app->plant_selection_pending)return;
+	if(strcmp(app->species_id,app->plant_detail_species_id)==0)
+	{
+		app->page=APP_PAGE_HOME;
+		app->ui_dirty=1;
+		return;
+	}
+	if(!app->gateway_ready)
+	{
+		App_SetPlantRequestError(app,&app->plant_detail_state,"GATEWAY OFFLINE");
+		return;
+	}
+	length=Protocol_BuildPlantSelect(frame,sizeof(frame),app->device_id,
+	                                app->plant_detail_species_id);
+	if(length==0 || !AppTx_Enqueue(frame,length))
+	{
+		App_SetPlantRequestError(app,&app->plant_detail_state,"TX QUEUE FULL");
+		return;
+	}
+	app->plant_selection_pending=1;
+	AppState_CopyText(app->plant_error,sizeof(app->plant_error),"NONE");
+	app->plant_ui_revision++;
+	app->ui_dirty=1;
+	printf("[PLANT] SELECT REQUEST device=%s species=%s\r\n",
+	       app->device_id,app->plant_detail_species_id);
+}
+
 int main(void)
 {
-	AppState app;
+	static AppState app;
 	AppKeyEvent key_event;
 	AppTouchEvent touch_event;
 	u8 wifi_ready;
@@ -598,6 +1070,7 @@ int main(void)
 	NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
 	USART1_Init(115200);
 	AppState_Init(&app);
+	AssetService_Init();
 	WiFi_ModuleEnable_Init();
 	UiService_Init();
 	TouchService_Init();
@@ -609,7 +1082,8 @@ int main(void)
 	Protocol_Init();
 	AppTx_Clear();
 
-	printf("\r\n[BOOT] Agriculture MVP firmware start\r\n");
+	printf("\r\n[BOOT] GreenMind firmware start device=%s plant=%s\r\n",
+	       app.device_id,app.species_id);
 	wifi_ready=WiFi_ConfigServer(&app);
 	if(!wifi_ready)printf("[WIFI INIT] STOPPED - SEE FAILED STAGE\r\n");
 
@@ -620,11 +1094,15 @@ int main(void)
 		AppTcp_Task(&app);
 		if(wifi_ready)WiFi_StaTask(&app);
 		SensorService_Task(&app);
+		if(AssetService_Task())
+			App_HandleAssetFailure(&app,AssetService_GetError());
 
 		key_event=KeyService_Task();
 		if(key_event==APP_KEY_EVENT_PAGE)
 		{
-			app.page=(AppPage)(((u8)app.page+1)%APP_PAGE_COUNT);
+			if((u8)app.page>=(u8)(APP_PAGE_COUNT-1))
+				app.page=APP_PAGE_HOME;
+			else app.page=(AppPage)((u8)app.page+1);
 			app.ui_dirty=1;
 			printf("[KEY] PAGE\r\n");
 		}
@@ -676,6 +1154,36 @@ int main(void)
 			UiService_Invalidate();
 			app.ui_dirty=1;
 		}
+		else if(touch_event==APP_TOUCH_EVENT_PLANT_LIBRARY)
+		{
+			printf("[TOUCH] PLANT LIBRARY\r\n");
+			App_RequestPlantList(&app);
+		}
+		else if(touch_event>=APP_TOUCH_EVENT_PLANT_ITEM_0 &&
+		        touch_event<=APP_TOUCH_EVENT_PLANT_ITEM_5)
+		{
+			u8 plant_index=(u8)(touch_event-APP_TOUCH_EVENT_PLANT_ITEM_0);
+			printf("[TOUCH] PLANT ITEM %u\r\n",(unsigned int)plant_index);
+			App_RequestPlantDetail(&app,plant_index);
+		}
+		else if(touch_event==APP_TOUCH_EVENT_PLANT_BACK)
+		{
+			if(app.page==APP_PAGE_PLANT_PROFILE)
+				app.page=APP_PAGE_PLANT_LIBRARY;
+			else app.page=APP_PAGE_HOME;
+			app.ui_dirty=1;
+			printf("[TOUCH] PLANT BACK\r\n");
+		}
+		else if(touch_event==APP_TOUCH_EVENT_PLANT_REFRESH)
+		{
+			printf("[TOUCH] PLANT REFRESH\r\n");
+			App_RequestPlantList(&app);
+		}
+		else if(touch_event==APP_TOUCH_EVENT_PLANT_USE)
+		{
+			printf("[TOUCH] PLANT USE\r\n");
+			App_SelectPlant(&app);
+		}
 
 		App_AiTimeoutTask(&app);
 		if(app.ui_dirty && ui_timer==0)
@@ -688,12 +1196,13 @@ int main(void)
 
 		if(log_timer==0)
 		{
-			printf("[STATUS] T=%u H=%u L=%u DHT=%s WIFI=%s TCP=%s GW=%s AI=%s\r\n",
+			printf("[STATUS] T=%u H=%u L=%u DHT=%s WIFI=%s TCP=%s GW=%s AI=%s IMG=%s/%s\r\n",
 			       (unsigned int)app.temperature,(unsigned int)app.humidity,
 			       (unsigned int)app.light,app.dht_valid?"OK":"ERROR",
 			       app.wifi_status,app.tcp_connected?"UP":"DOWN",
 			       app.gateway_ready?"READY":"OFFLINE",
-			       AppState_AiStateText(app.ai_state));
+			       AppState_AiStateText(app.ai_state),
+			       app.asset_status,app.asset_state);
 			log_timer=200;
 		}
 		else log_timer--;

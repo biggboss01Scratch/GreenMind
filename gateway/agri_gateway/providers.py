@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 import os
 import re
+import unicodedata
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from .plant_repository import PlantDetails
+from .plant_rules import PlantAssessment
 from .protocol import SensorRequest
 
 
@@ -47,6 +50,20 @@ ADVICE_MAP = {
     "check_sensor": "CHECK_SENSOR",
     "observe_plant": "OBSERVE_PLANT",
 }
+SUGGESTION_MAX_CHARS = 160
+SUGGESTION_REPLACEMENTS = {
+    "°C": " degrees C",
+    "°F": " degrees F",
+    "°": " degrees ",
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u2013": "-",
+    "\u2014": "-",
+    "\u2026": "...",
+    "\u00a0": " ",
+}
 
 
 class ProviderError(RuntimeError):
@@ -65,7 +82,12 @@ class AnalysisResult:
 
 
 class ModelProvider(Protocol):
-    def analyze(self, request: SensorRequest) -> AnalysisResult: ...
+    def analyze(
+        self,
+        request: SensorRequest,
+        plant: PlantDetails,
+        assessment: PlantAssessment,
+    ) -> AnalysisResult: ...
 
 
 def load_api_key(path: Path) -> str:
@@ -84,37 +106,18 @@ def load_api_key(path: Path) -> str:
 
 
 class MockProvider:
-    def analyze(self, request: SensorRequest) -> AnalysisResult:
-        if request.temperature > 35:
-            return AnalysisResult(
-                "DANGER",
-                "TEMP_HIGH",
-                "CHECK_SOIL",
-                "MOVE_TO_SHADE",
-                "Temperature is high. Move the plant to shade and check the soil moisture.",
-            )
-        if request.temperature > 30 and request.light_level == "STRONG":
-            return AnalysisResult(
-                "WARN",
-                "HOT_AND_BRIGHT",
-                "CHECK_SOIL",
-                "MOVE_TO_SHADE",
-                "Temperature and light are high. Avoid direct sunlight and check the soil.",
-            )
-        if request.light_level == "DARK":
-            return AnalysisResult(
-                "WARN",
-                "LIGHT_LOW",
-                "NO_NEED",
-                "INCREASE_LIGHT",
-                "Light is low. Increase indirect light and continue monitoring the plant.",
-            )
+    def analyze(
+        self,
+        request: SensorRequest,
+        plant: PlantDetails,
+        assessment: PlantAssessment,
+    ) -> AnalysisResult:
         return AnalysisResult(
-            "NORMAL",
-            "NONE",
-            "NO_NEED",
-            "KEEP_CURRENT",
-            "Temperature, humidity, and light are normal. Keep the current conditions.",
+            assessment.status,
+            assessment.issue,
+            assessment.watering,
+            assessment.advice,
+            assessment.suggestion_en,
         )
 
 
@@ -124,14 +127,19 @@ class DeepSeekProvider:
         self._model = model
         self._timeout_seconds = timeout_seconds
 
-    def analyze(self, request: SensorRequest) -> AnalysisResult:
+    def analyze(
+        self,
+        request: SensorRequest,
+        plant: PlantDetails,
+        assessment: PlantAssessment,
+    ) -> AnalysisResult:
         last_error: ProviderError | None = None
         for _ in range(2):
             try:
-                content = self._request(request)
+                content = self._request(request, plant, assessment)
                 if not content.strip():
                     raise ProviderError("MODEL_EMPTY_OUTPUT")
-                return self._validate(json.loads(content))
+                return self._validate(json.loads(content), assessment)
             except json.JSONDecodeError as exc:
                 last_error = ProviderError("MODEL_BAD_OUTPUT")
                 last_error.__cause__ = exc
@@ -141,23 +149,38 @@ class DeepSeekProvider:
                     break
         raise last_error or ProviderError("MODEL_ERROR")
 
-    def _request(self, request: SensorRequest) -> str:
+    def _request(
+        self,
+        request: SensorRequest,
+        plant: PlantDetails,
+        assessment: PlantAssessment,
+    ) -> str:
         system_prompt = (
-            "You are a plant environment care assistant. Analyze air temperature, air "
-            "humidity, and relative light. Air humidity is not soil moisture, so watering "
-            "advice may only recommend checking the soil. Never control a pump or any "
-            "hardware. Return only one JSON object with no extra text. The required fields "
-            "are status, main_issue, watering_advice, advice_code, and suggestion_en. "
-            "Use plain ASCII English for suggestion_en and keep it within 160 characters. "
+            "You explain a deterministic GreenMind plant assessment. The backend rule "
+            "result is authoritative: do not change its status, issue, watering advice, "
+            "or action code. Air humidity is not soil moisture, so watering advice may "
+            "only recommend checking the soil. Never control a pump or any hardware. "
+            "Return only one JSON object with no extra text. The required fields are "
+            "status, main_issue, watering_advice, advice_code, and suggestion_en. Use "
+            "plain ASCII English for suggestion_en and keep it within 160 characters. "
             "status must be one of normal/warning/danger/error; "
             f"main_issue must be one of {list(ISSUE_MAP)}; "
             f"watering_advice must be one of {list(WATERING_MAP)}; "
             f"advice_code must be one of {list(ADVICE_MAP)}."
         )
         user_prompt = (
-            f"Temperature={request.temperature} C, air humidity={request.humidity}%, "
-            f"relative light={request.light}/100, light level={request.light_level}. "
-            "Return the JSON plant care assessment."
+            f"Device={request.device_id}; plant={plant.summary.name_en} "
+            f"({plant.summary.species_id}); preferred temperature="
+            f"{plant.temp_min_c}-{plant.temp_max_c} C; preferred air humidity="
+            f"{plant.humidity_min}-{plant.humidity_max}%; preferred relative light="
+            f"{plant.light_min}-{plant.light_max}/100. Current temperature="
+            f"{request.temperature} C, air humidity={request.humidity}%, relative light="
+            f"{request.light}/100. Backend result: "
+            f"status={next(key for key, value in STATUS_MAP.items() if value == assessment.status)}, "
+            f"main_issue={next(key for key, value in ISSUE_MAP.items() if value == assessment.issue)}, "
+            f"watering_advice={next(key for key, value in WATERING_MAP.items() if value == assessment.watering)}, "
+            f"advice_code={next(key for key, value in ADVICE_MAP.items() if value == assessment.advice)}. "
+            "Return the same enums and a short plant-specific explanation."
         )
         payload = {
             "model": self._model,
@@ -205,7 +228,25 @@ class DeepSeekProvider:
             raise ProviderError("MODEL_BAD_RESPONSE") from exc
 
     @staticmethod
-    def _validate(data: object) -> AnalysisResult:
+    def _normalize_suggestion(value: object) -> str:
+        suggestion = str(value).replace("\r", " ").replace("\n", " ")
+        for source, replacement in SUGGESTION_REPLACEMENTS.items():
+            suggestion = suggestion.replace(source, replacement)
+        suggestion = (
+            unicodedata.normalize("NFKD", suggestion)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
+        suggestion = " ".join(suggestion.split())
+        if len(suggestion) > SUGGESTION_MAX_CHARS:
+            shortened = suggestion[: SUGGESTION_MAX_CHARS - 3]
+            if " " in shortened:
+                shortened = shortened.rsplit(" ", 1)[0]
+            suggestion = shortened.rstrip(" ,;:-") + "..."
+        return suggestion
+
+    @staticmethod
+    def _validate(data: object, assessment: PlantAssessment) -> AnalysisResult:
         if not isinstance(data, dict):
             raise ProviderError("MODEL_BAD_OUTPUT")
         try:
@@ -213,9 +254,27 @@ class DeepSeekProvider:
             issue = ISSUE_MAP[str(data["main_issue"])]
             watering = WATERING_MAP[str(data["watering_advice"])]
             advice = ADVICE_MAP[str(data["advice_code"])]
-            suggestion = str(data["suggestion_en"]).replace("\r", " ").replace("\n", " ")
+            suggestion = DeepSeekProvider._normalize_suggestion(data["suggestion_en"])
         except (KeyError, TypeError) as exc:
             raise ProviderError("MODEL_BAD_OUTPUT") from exc
-        if not suggestion or len(suggestion) > 160 or not suggestion.isascii():
-            raise ProviderError("MODEL_BAD_OUTPUT")
-        return AnalysisResult(status, issue, watering, advice, suggestion)
+        if not suggestion:
+            suggestion = assessment.suggestion_en
+        if (
+            status,
+            issue,
+            watering,
+            advice,
+        ) != (
+            assessment.status,
+            assessment.issue,
+            assessment.watering,
+            assessment.advice,
+        ):
+            suggestion = assessment.suggestion_en
+        return AnalysisResult(
+            assessment.status,
+            assessment.issue,
+            assessment.watering,
+            assessment.advice,
+            suggestion,
+        )

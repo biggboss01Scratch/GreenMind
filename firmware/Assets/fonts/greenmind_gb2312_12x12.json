@@ -1,0 +1,29 @@
+{
+  "format": "GreenMind GB2312 12x12 1bpp",
+  "source_font": "Fusion Pixel Font 12px Mono zh_hans",
+  "source_version": "2026.07.01",
+  "fallback_font": "Noto Sans CJK SC Regular",
+  "fallback_source_commit": "165c01b46ea533872e002e0785ff17e44f6d97d8",
+  "license": "SIL Open Font License 1.1",
+  "cell_width": 12,
+  "cell_height": 12,
+  "font_ascent": 10,
+  "packing": "row-major continuous bits, MSB first",
+  "lead_range": [
+    "A1",
+    "F7"
+  ],
+  "trail_range": [
+    "A1",
+    "FE"
+  ],
+  "slot_count": 8178,
+  "assigned_glyph_count": 7445,
+  "han_glyph_count": 6763,
+  "primary_glyph_count": 7268,
+  "fallback_glyph_count": 177,
+  "missing_glyph_count": 0,
+  "bytes_per_glyph": 18,
+  "byte_size": 147204,
+  "sha256": "f0368856cf6dcea2e49d00e5598741ad6b7ca11040397dcb35dd540fc1e7f091"
+}

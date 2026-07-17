@@ -27,6 +27,10 @@ static AppTouchEvent TouchService_HitTest(AppPage page,u16 x,u16 y)
 	}
 
 	if(page==APP_PAGE_HOME &&
+	   TouchService_InRect(x,y,60,68,260,243))
+		return APP_TOUCH_EVENT_PLANT_LIBRARY;
+
+	if(page==APP_PAGE_HOME &&
 	   TouchService_InRect(x,y,18,TOUCH_ACTION_Y1,151,TOUCH_ACTION_Y2))
 		return APP_TOUCH_EVENT_DETAIL;
 
@@ -49,6 +53,34 @@ static AppTouchEvent TouchService_HitTest(AppPage page,u16 x,u16 y)
 	if(page==APP_PAGE_SYSTEM &&
 	   TouchService_InRect(x,y,169,TOUCH_ACTION_Y1,302,TOUCH_ACTION_Y2))
 		return APP_TOUCH_EVENT_CALIBRATE;
+
+	if(page==APP_PAGE_PLANT_LIBRARY)
+	{
+		if(TouchService_InRect(x,y,18,88,151,166))
+			return APP_TOUCH_EVENT_PLANT_ITEM_0;
+		if(TouchService_InRect(x,y,169,88,302,166))
+			return APP_TOUCH_EVENT_PLANT_ITEM_1;
+		if(TouchService_InRect(x,y,18,178,151,256))
+			return APP_TOUCH_EVENT_PLANT_ITEM_2;
+		if(TouchService_InRect(x,y,169,178,302,256))
+			return APP_TOUCH_EVENT_PLANT_ITEM_3;
+		if(TouchService_InRect(x,y,18,268,151,346))
+			return APP_TOUCH_EVENT_PLANT_ITEM_4;
+		if(TouchService_InRect(x,y,169,268,302,346))
+			return APP_TOUCH_EVENT_PLANT_ITEM_5;
+		if(TouchService_InRect(x,y,18,TOUCH_ACTION_Y1,151,TOUCH_ACTION_Y2))
+			return APP_TOUCH_EVENT_PLANT_BACK;
+		if(TouchService_InRect(x,y,169,TOUCH_ACTION_Y1,302,TOUCH_ACTION_Y2))
+			return APP_TOUCH_EVENT_PLANT_REFRESH;
+	}
+
+	if(page==APP_PAGE_PLANT_PROFILE)
+	{
+		if(TouchService_InRect(x,y,18,TOUCH_ACTION_Y1,151,TOUCH_ACTION_Y2))
+			return APP_TOUCH_EVENT_PLANT_BACK;
+		if(TouchService_InRect(x,y,169,TOUCH_ACTION_Y1,302,TOUCH_ACTION_Y2))
+			return APP_TOUCH_EVENT_PLANT_USE;
+	}
 
 	return APP_TOUCH_EVENT_NONE;
 }

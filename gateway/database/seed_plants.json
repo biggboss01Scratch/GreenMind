@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "calibration_note": "Temperature and air-humidity ranges are course-project defaults. Light values use the GreenMind 0-100 relative sensor scale, not lux.",
+  "default_device": {
+    "device_id": "GM001",
+    "device_name": "GreenMind Demo Unit",
+    "current_species_id": "pothos"
+  },
+  "plants": [
+    {
+      "species_id": "pothos",
+      "name_zh": "绿萝",
+      "name_en": "Pothos",
+      "display_name": "POTHOS",
+      "scientific_name": "Epipremnum aureum",
+      "category": "FOLIAGE",
+      "description_zh": "常见耐阴观叶植物，适合作为 GreenMind 的默认展示植物。",
+      "difficulty": "EASY",
+      "source_type": "BUILTIN",
+      "data_version": 1,
+      "requirements": {
+        "temp_min_c": 18,
+        "temp_max_c": 30,
+        "humidity_min": 40,
+        "humidity_max": 75,
+        "light_min": 25,
+        "light_max": 60,
+        "light_preference": "BRIGHT_INDIRECT",
+        "watering_style": "CHECK_SOIL_BEFORE_WATERING",
+        "ventilation_need": "MODERATE",
+        "care_summary_zh": "避免长期强光直射，表土变干后再浇水。",
+        "risk_notes": [
+          "avoid prolonged direct sunlight",
+          "avoid waterlogged roots",
+          "air humidity is not soil moisture"
+        ]
+      }
+    },
+    {
+      "species_id": "mint",
+      "name_zh": "薄荷",
+      "name_en": "Mint",
+      "display_name": "MINT",
+      "scientific_name": "Mentha spicata",
+      "category": "HERB",
+      "description_zh": "生长较快的芳香草本，偏好明亮环境和相对稳定的水分。",
+      "difficulty": "EASY",
+      "source_type": "BUILTIN",
+      "data_version": 1,
+      "requirements": {
+        "temp_min_c": 15,
+        "temp_max_c": 28,
+        "humidity_min": 40,
+        "humidity_max": 75,
+        "light_min": 45,
+        "light_max": 80,
+        "light_preference": "BRIGHT",
+        "watering_style": "KEEP_EVENLY_MOIST_NOT_SOGGY",
+        "ventilation_need": "GOOD",
+        "care_summary_zh": "保持明亮和通风，避免盆土长期积水。",
+        "risk_notes": [
+          "avoid stagnant air",
+          "do not infer soil moisture from air humidity",
+          "strong midday sun may scorch leaves"
+        ]
+      }
+    },
+    {
+      "species_id": "succulent",
+      "name_zh": "多肉植物",
+      "name_en": "Succulent",
+      "display_name": "SUCCULENT",
+      "scientific_name": "Echeveria spp.",
+      "category": "SUCCULENT",
+      "description_zh": "以拟石莲花属为示例的莲座型多肉，喜较强光照和干湿循环。",
+      "difficulty": "MEDIUM",
+      "source_type": "ONLINE",
+      "data_version": 1,
+      "requirements": {
+        "temp_min_c": 15,
+        "temp_max_c": 30,
+        "humidity_min": 30,
+        "humidity_max": 60,
+        "light_min": 55,
+        "light_max": 90,
+        "light_preference": "BRIGHT",
+        "watering_style": "ALLOW_SOIL_TO_DRY",
+        "ventilation_need": "GOOD",
+        "care_summary_zh": "提供充足散射光，确认盆土干燥后再浇水。",
+        "risk_notes": [
+          "high humidity and poor ventilation increase rot risk",
+          "avoid frequent shallow watering",
+          "acclimate gradually to strong sunlight"
+        ]
+      }
+    },
+    {
+      "species_id": "cactus",
+      "name_zh": "仙人掌",
+      "name_en": "Cactus",
+      "display_name": "CACTUS",
+      "scientific_name": "Opuntia microdasys",
+      "category": "CACTUS",
+      "description_zh": "耐旱型仙人掌示例，偏好充足光照、干燥和良好通风。",
+      "difficulty": "EASY",
+      "source_type": "ONLINE",
+      "data_version": 1,
+      "requirements": {
+        "temp_min_c": 18,
+        "temp_max_c": 35,
+        "humidity_min": 20,
+        "humidity_max": 55,
+        "light_min": 65,
+        "light_max": 100,
+        "light_preference": "STRONG",
+        "watering_style": "WATER_ONLY_AFTER_SOIL_DRIES",
+        "ventilation_need": "GOOD",
+        "care_summary_zh": "保证充足光照，浇水间隔宁干勿湿。",
+        "risk_notes": [
+          "avoid waterlogged soil",
+          "low light may cause weak growth",
+          "protect from sudden extreme temperature changes"
+        ]
+      }
+    },
+    {
+      "species_id": "orchid",
+      "name_zh": "蝴蝶兰",
+      "name_en": "Moth Orchid",
+      "display_name": "ORCHID",
+      "scientific_name": "Phalaenopsis spp.",
+      "category": "FLOWERING",
+      "description_zh": "室内常见附生兰花，偏好明亮散射光、温暖环境和适度空气湿度。",
+      "difficulty": "ADVANCED",
+      "source_type": "ONLINE",
+      "data_version": 1,
+      "requirements": {
+        "temp_min_c": 18,
+        "temp_max_c": 28,
+        "humidity_min": 50,
+        "humidity_max": 75,
+        "light_min": 30,
+        "light_max": 60,
+        "light_preference": "BRIGHT_INDIRECT",
+        "watering_style": "CHECK_ROOT_MEDIA_BEFORE_WATERING",
+        "ventilation_need": "GOOD",
+        "care_summary_zh": "提供明亮散射光和通风，避免叶心积水。",
+        "risk_notes": [
+          "avoid prolonged direct sunlight",
+          "avoid water remaining in the crown",
+          "do not keep roots continuously wet"
+        ]
+      }
+    },
+    {
+      "species_id": "tomato",
+      "name_zh": "番茄",
+      "name_en": "Tomato",
+      "display_name": "TOMATO",
+      "scientific_name": "Solanum lycopersicum",
+      "category": "FRUITING",
+      "description_zh": "课程展示用结果类植物，喜充足光照、通风和相对稳定的生长温度。",
+      "difficulty": "MEDIUM",
+      "source_type": "ONLINE",
+      "data_version": 1,
+      "requirements": {
+        "temp_min_c": 18,
+        "temp_max_c": 30,
+        "humidity_min": 40,
+        "humidity_max": 70,
+        "light_min": 60,
+        "light_max": 100,
+        "light_preference": "STRONG",
+        "watering_style": "CHECK_SOIL_AND_WATER_DEEPLY",
+        "ventilation_need": "GOOD",
+        "care_summary_zh": "保证充足光照和通风，浇水前检查土壤状态。",
+        "risk_notes": [
+          "air humidity does not indicate root-zone moisture",
+          "poor ventilation may increase disease risk",
+          "avoid large repeated wet-dry swings"
+        ]
+      }
+    }
+  ]
+}

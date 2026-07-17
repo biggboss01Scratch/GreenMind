@@ -2,6 +2,12 @@
 myDeepseekApiKey.md
 gateway/.env
 gateway/*.log
+gateway/data/*.db
+gateway/data/*.db-*
+gateway/data/*.sqlite
+gateway/data/*.sqlite-*
+gateway/data/*.sqlite3
+gateway/data/*.sqlite3-*
 firmware/APP/agriculture/app_secrets.h
 
 # Python

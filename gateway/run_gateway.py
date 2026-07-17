@@ -5,6 +5,8 @@ from pathlib import Path
 
 from agri_gateway.client import GatewayClient, log
 from agri_gateway.config import GatewayConfig
+from agri_gateway.database import DEFAULT_DATABASE_PATH, DatabaseInitializationError, initialize_database
+from agri_gateway.plant_repository import PlantRepository
 from agri_gateway.providers import (
     DeepSeekProvider,
     MockProvider,
@@ -20,6 +22,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--provider", choices=("deepseek", "mock"), default="deepseek")
     parser.add_argument("--model", default="deepseek-v4-flash")
     parser.add_argument("--api-timeout", type=float, default=45.0)
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DATABASE_PATH,
+        help="GreenMind SQLite database path.",
+    )
     parser.add_argument(
         "--key-file",
         type=Path,
@@ -40,6 +48,18 @@ def main() -> int:
     )
     config.validate()
 
+    try:
+        database_summary = initialize_database(args.db)
+    except DatabaseInitializationError as exc:
+        log("DATABASE", f"initialization failed: {exc}")
+        return 3
+    repository = PlantRepository(database_summary.database_path)
+    log(
+        "DATABASE",
+        f"ready path={database_summary.database_path} "
+        f"plants={database_summary.plant_count} images={database_summary.image_count}",
+    )
+
     if config.provider == "mock":
         provider = MockProvider()
         log("CONFIG", "provider=mock (no API call)")
@@ -52,7 +72,7 @@ def main() -> int:
         provider = DeepSeekProvider(api_key, config.model, config.api_timeout_seconds)
         log("CONFIG", f"provider=deepseek model={config.model}; key loaded securely")
 
-    client = GatewayClient(config, provider)
+    client = GatewayClient(config, provider, repository)
     try:
         client.run_forever()
     except KeyboardInterrupt:
