@@ -1,0 +1,29 @@
+# Local secrets
+myDeepseekApiKey.md
+gateway/.env
+firmware/APP/agriculture/app_secrets.h
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Keil build/user files
+firmware/Obj/
+firmware/Listings/
+firmware/tmp/
+firmware/DebugConfig/
+firmware/*.uvguix.*
+firmware/*.bak
+firmware/*.log
+
+# Editor / OS generated files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+__Previews/
