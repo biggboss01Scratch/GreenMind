@@ -179,7 +179,7 @@ class DeepSeekProvider:
             headers={
                 "Authorization": f"Bearer {self._api_key}",
                 "Content-Type": "application/json",
-                "User-Agent": "AgricultureSys-MVP/1.0",
+                "User-Agent": "GreenMind-MVP/1.0",
             },
         )
         try:

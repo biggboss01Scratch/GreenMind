@@ -1,6 +1,7 @@
 # Local secrets
 myDeepseekApiKey.md
 gateway/.env
+gateway/*.log
 firmware/APP/agriculture/app_secrets.h
 
 # Python

@@ -1,4 +1,4 @@
-# AgricultureSys TCP 通信协议 v1
+# GreenMind TCP 通信协议 v1
 
 ## 1. 目的
 

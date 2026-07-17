@@ -1,1 +1,1 @@
-"""AgricultureSys computer gateway package."""
+"""GreenMind computer gateway package."""

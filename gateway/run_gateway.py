@@ -14,7 +14,7 @@ from agri_gateway.providers import (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="AgricultureSys STM32/DeepSeek gateway")
+    parser = argparse.ArgumentParser(description="GreenMind STM32/DeepSeek gateway")
     parser.add_argument("device_ip", help="STA IP shown on the STM32 TFT")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--provider", choices=("deepseek", "mock"), default="deepseek")

@@ -1,4 +1,4 @@
-# AgricultureSys MVP 需求规格说明书 v1
+# GreenMind MVP 需求规格说明书 v1
 
 ## 1. 文档定位
 

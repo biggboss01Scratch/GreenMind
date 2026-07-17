@@ -1,4 +1,4 @@
-# AgricultureSys Python Gateway
+# GreenMind Python Gateway
 
 电脑网关连接 ESP07 的 STA IP:8080，接收 STM32 传感器数据，调用 DeepSeek，并将校验后的短枚举返回 STM32。
 
@@ -6,7 +6,7 @@
 
 ## 启动
 
-在 `AgricultureSys/gateway` 目录运行，IP 替换为 TFT 显示的 STA IP：
+在 `GreenMind/gateway` 目录运行，IP 替换为 TFT 显示的 STA IP：
 
 ```powershell
 python .\run_gateway.py 192.168.137.23

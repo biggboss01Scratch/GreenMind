@@ -1,4 +1,4 @@
-# AgricultureSys
+# GreenMind
 
 基于 STM32、ESP07 和电脑端大模型网关的智慧植物养护建议与辅助浇水系统。
 
@@ -13,8 +13,8 @@
 - 电脑可连接 ESP07 的 STA IP `:8080`；
 - TCP 已完成 `HELLO`、`PING/PONG`、`ECHO` 全双工闭环；
 - DHT11、光敏、按键、直流电机、彩灯、蜂鸣器均有独立实验代码可复用。
-- `AgricultureSys/firmware` 已完成 Keil 构建；
-- `AgricultureSys/gateway` 已通过协议/Mock 单元测试和一次真实 DeepSeek 调用。
+- `GreenMind/firmware` 已完成 Keil 构建；
+- `GreenMind/gateway` 已通过协议/Mock 单元测试和一次真实 DeepSeek 调用。
 - 协议队列问题修复后，TFT 已实物确认进入 `AI: DONE`；
 - DeepSeek 完整建议和 TFT 状态当前统一使用英文；
 - TFT 已改为局部刷新，等待继续观察实物观感。
@@ -53,7 +53,7 @@ TFT / 彩灯 / 蜂鸣器
 ## 实施原则
 
 1. `wifi_tft` 等已验证工程作为只读基线，不直接堆叠综合业务。
-2. 在 `AgricultureSys` 中建立新的固件和电脑网关代码。
+2. 在 `GreenMind` 中建立新的固件和电脑网关代码。
 3. 传感器、网络、协议、UI、水泵分别封装，主循环只负责调度和状态流转。
 4. 先使用固定响应打通链路，再接入真实模型。
 5. 大模型只给建议，不能直接控制水泵。
@@ -62,7 +62,7 @@ TFT / 彩灯 / 蜂鸣器
 ## 当前目录
 
 ```text
-AgricultureSys/
+GreenMind/
 ├─ firmware/    STM32 最小 MVP 工程
 ├─ gateway/     Python TCP/DeepSeek 网关
 └─ *.md         需求、协议和验证记录
