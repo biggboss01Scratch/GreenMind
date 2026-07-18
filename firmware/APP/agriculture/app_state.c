@@ -71,6 +71,11 @@ void AppState_Init(AppState *state)
 	AppState_CopyText(state->ai_issue,sizeof(state->ai_issue),"-");
 	AppState_CopyText(state->ai_watering,sizeof(state->ai_watering),"-");
 	AppState_CopyText(state->ai_advice,sizeof(state->ai_advice),"-");
+	state->ai_dialog_ready=0;
+	state->ai_dialog_revision=0;
+	state->ai_dialog_scroll_line=0;
+	AppState_CopyText(state->ai_dialog_error,
+	                  sizeof(state->ai_dialog_error),"NONE");
 	AppState_CopyText(state->last_error,sizeof(state->last_error),"NONE");
 	state->ui_dirty=1;
 }

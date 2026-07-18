@@ -65,6 +65,9 @@ class PlantRuleTests(unittest.TestCase):
         self.assertNotIn("PUMP", result.advice)
         self.assertIn("Pothos", result.suggestion_en)
         self.assertTrue(result.suggestion_en.isascii())
+        self.assertIn("绿萝", result.dialog_zh)
+        self.assertIn("30度", result.dialog_zh)
+        self.assertLessEqual(len(result.dialog_zh.encode("utf-8")), 768)
 
     def test_model_cannot_override_backend_rule_enums(self) -> None:
         plant = self.repository.get_plant("pothos")
@@ -78,7 +81,10 @@ class PlantRuleTests(unittest.TestCase):
                 "watering_advice": "no_need",
                 "advice_code": "keep_current",
                 "suggestion_en": "Everything is fine.",
+                "dialog_zh": "这段内容与后端结论不一致，必须回退到安全文案。",
             },
+            request,
+            plant,
             assessment,
         )
         self.assertEqual(
@@ -91,6 +97,7 @@ class PlantRuleTests(unittest.TestCase):
             ),
         )
         self.assertEqual(result.suggestion_en, assessment.suggestion_en)
+        self.assertIn("绿萝", result.dialog_zh)
 
     def test_model_suggestion_normalizes_display_unsafe_unicode(self) -> None:
         plant = self.repository.get_plant("pothos")
@@ -106,7 +113,13 @@ class PlantRuleTests(unittest.TestCase):
                 "suggestion_en": (
                     "At 30°C — Pothos’s leaves would enjoy softer light."
                 ),
+                "dialog_zh": (
+                    "我是绿萝，现在温度30度、空气湿度45%、光照80%，光线有点强。"
+                    "我的气生根会帮助攀援，请把我移到柔和的散射光处慢慢适应。"
+                ),
             },
+            request,
+            plant,
             assessment,
         )
         self.assertEqual(
@@ -114,6 +127,7 @@ class PlantRuleTests(unittest.TestCase):
             "At 30 degrees C - Pothos's leaves would enjoy softer light.",
         )
         self.assertTrue(result.suggestion_en.isascii())
+        self.assertIn("气生根", result.dialog_zh)
 
     def test_model_suggestion_is_shortened_at_a_word_boundary(self) -> None:
         suggestion = DeepSeekProvider._normalize_suggestion(

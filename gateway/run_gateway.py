@@ -22,6 +22,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--provider", choices=("deepseek", "mock"), default="deepseek")
     parser.add_argument("--model", default="deepseek-v4-flash")
     parser.add_argument("--api-timeout", type=float, default=45.0)
+    parser.add_argument("--heartbeat-interval", type=float, default=3.0)
+    parser.add_argument("--heartbeat-timeout", type=float, default=12.0)
+    parser.add_argument(
+        "--no-ai-dialog",
+        action="store_true",
+        help="Disable AI_TEXT frames and keep only the legacy AI_RESULT enums.",
+    )
     parser.add_argument(
         "--db",
         type=Path,
@@ -44,6 +51,9 @@ def main() -> int:
         provider=args.provider,
         model=args.model,
         api_timeout_seconds=args.api_timeout,
+        heartbeat_interval_seconds=args.heartbeat_interval,
+        heartbeat_timeout_seconds=args.heartbeat_timeout,
+        ai_dialog_enabled=not args.no_ai_dialog,
         key_file=args.key_file,
     )
     config.validate()
@@ -71,6 +81,16 @@ def main() -> int:
             return 2
         provider = DeepSeekProvider(api_key, config.model, config.api_timeout_seconds)
         log("CONFIG", f"provider=deepseek model={config.model}; key loaded securely")
+    log(
+        "CONFIG",
+        f"ai_dialog={'enabled' if config.ai_dialog_enabled else 'disabled'}",
+    )
+    log(
+        "CONFIG",
+        "heartbeat="
+        f"{config.heartbeat_interval_seconds:.1f}s/"
+        f"timeout={config.heartbeat_timeout_seconds:.1f}s",
+    )
 
     client = GatewayClient(config, provider, repository)
     try:

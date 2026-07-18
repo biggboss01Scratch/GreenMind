@@ -1,0 +1,9 @@
+{
+  "format": "sorted uint16_le unicode, uint16_le gb2312",
+  "entry_count": 7445,
+  "bytes_per_entry": 4,
+  "byte_size": 29780,
+  "first_unicode": "U+00A4",
+  "last_unicode": "U+FFE5",
+  "sha256": "43600c1fa2ea588467d13207ee970856b660afc36daea279fcf7341983aee716"
+}

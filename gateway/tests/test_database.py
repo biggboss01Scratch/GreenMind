@@ -23,8 +23,21 @@ class PlantDatabaseTests(unittest.TestCase):
         self.assertEqual(self.summary.plant_count, 6)
         self.assertEqual(self.summary.image_count, 18)
         self.assertEqual(self.summary.device_count, 1)
-        self.assertEqual(len(self.repository.list_plants("BUILTIN")), 2)
-        self.assertEqual(len(self.repository.list_plants("ONLINE")), 4)
+        self.assertEqual(len(self.repository.list_plants("BUILTIN")), 1)
+        self.assertEqual(len(self.repository.list_plants("ONLINE")), 5)
+
+    def test_every_dynamic_plant_has_three_downloadable_images(self) -> None:
+        for species_id in ("mint", "succulent", "cactus", "orchid", "tomato"):
+            for state in ("NORMAL", "ATTENTION", "DANGER"):
+                with self.subTest(species_id=species_id, state=state):
+                    image = self.repository.get_image(species_id, state)
+                    self.assertIsNotNone(image)
+                    assert image is not None
+                    self.assertEqual(image.image_format, "RGB565_BE")
+                    self.assertEqual(
+                        (image.width, image.height, image.byte_size),
+                        (48, 48, 4608),
+                    )
 
     def test_orchid_profile_and_image(self) -> None:
         orchid = self.repository.get_plant("orchid")
@@ -64,15 +77,20 @@ class PlantDatabaseTests(unittest.TestCase):
             watering="CHECK_SOIL",
             action_code="MOVE_TO_SHADE",
             suggestion_en="Move the plant away from direct sunlight.",
+            dialog_zh="我是绿萝，今天的光线有点强，请把我移到散射光处。",
             provider="mock",
         )
         self.assertGreater(analysis_id, 0)
         with database_session(self.database_path) as connection:
             row = connection.execute(
-                "SELECT species_id, request_id FROM ai_analysis_logs WHERE analysis_id = ?",
+                """
+                SELECT species_id, request_id, dialog_zh
+                FROM ai_analysis_logs WHERE analysis_id = ?
+                """,
                 (analysis_id,),
             ).fetchone()
         self.assertEqual((row["species_id"], row["request_id"]), ("pothos", 15))
+        self.assertIn("绿萝", row["dialog_zh"])
 
     def test_foreign_keys_are_enabled(self) -> None:
         with database_session(self.database_path) as connection:

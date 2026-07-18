@@ -6,5 +6,6 @@
 void UiService_Init(void);
 void UiService_Render(const AppState *state);
 void UiService_Invalidate(void);
+u16 UiService_AiDialogMaxScroll(void);
 
 #endif

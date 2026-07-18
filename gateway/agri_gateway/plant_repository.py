@@ -228,6 +228,7 @@ class PlantRepository:
         watering: str | None,
         action_code: str | None,
         suggestion_en: str | None,
+        dialog_zh: str | None,
         provider: str | None,
     ) -> int:
         _validate_species_id(species_id)
@@ -239,8 +240,8 @@ class PlantRepository:
                         request_id, device_id, species_id, temperature_c,
                         humidity_percent, light_percent, light_level,
                         status, issue, watering, action_code,
-                        suggestion_en, provider
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        suggestion_en, dialog_zh, provider
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         request_id,
@@ -255,6 +256,7 @@ class PlantRepository:
                         watering,
                         action_code,
                         suggestion_en,
+                        dialog_zh,
                         provider,
                     ),
                 )

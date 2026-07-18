@@ -81,7 +81,7 @@ STM32 收到后将网关状态设为可用。只有 TCP 连接但没有 `HELLO_A
 
 ### 5.3 心跳
 
-任一端可以发送：
+当前版本由 Python 网关每 3 秒发送：
 
 ```text
 V1|PING
@@ -93,7 +93,9 @@ V1|PING
 V1|PONG
 ```
 
-MVP 不要求高频心跳。建议连接空闲 10 秒以上再发送，连续多次失败后关闭并重连。
+STM32 返回 `PONG`，网关收到 `PONG` 后不再回复，避免形成心跳循环。网关收到任意完整设备帧都视为设备仍然活跃；连续 12 秒没有收到任何设备帧时关闭旧 socket，随后进入原有的 3 秒重连循环。
+
+心跳还用于恢复“只重启 STM32、ESP07 和旧 TCP 连接仍然存在”的场景：`PING` 到达 ESP07 后产生 `+IPD`，STM32 固件据此重新发现连接并发送 `HELLO`，网关重新回复 `HELLO_ACK`。心跳由网关主循环发送，不与 AI 文本或图片分片并发交错。
 
 ## 6. AI 请求
 
@@ -180,7 +182,47 @@ V1|AI_STAGE|REQ_ID|VALIDATING
 
 STM32 根据阶段更新 TFT。`THINKING` 只表示请求正在由模型处理，不显示或传输模型内部推理内容。每收到一个合法阶段，STM32 刷新当前请求的超时计时。
 
-## 7. AI 结果
+## 7. AI 个性化长文本
+
+网关在 `VALIDATING` 后、`AI_RESULT` 前发送 UTF-8 中文台词。为避免中文、
+分隔符和 TCP 拆包影响基础 ASCII 协议，正文按原始 UTF-8 字节转为十六进制：
+
+```text
+V1|AI_TEXT_BEGIN|REQ_ID|BYTE_SIZE|CHUNK_COUNT|CRC32
+V1|AI_TEXT_CHUNK|REQ_ID|SEQUENCE|HEX_PAYLOAD
+V1|AI_TEXT_END|REQ_ID|CHUNK_COUNT|CRC32
+```
+
+示例：
+
+```text
+V1|AI_TEXT_BEGIN|42|230|8|BDCB3012
+V1|AI_TEXT_CHUNK|42|0|E68891E698AFE7BBBFE8909D...
+...
+V1|AI_TEXT_END|42|8|BDCB3012
+```
+
+约束：
+
+- 正文最多 768 个 UTF-8 字节；
+- 每包最多 32 个原始字节，即 64 个十六进制字符；
+- 最多 24 个正文分包，网关默认按 80 ms 间隔发送；
+- `SEQUENCE` 从 0 连续递增，不允许缺包、乱序或重复；
+- `CRC32` 使用标准 CRC-32/ISO-HDLC，与 Python `zlib.crc32` 一致；
+- STM32 只使用固定缓冲区，不动态申请内存；
+- 完成时必须同时校验请求编号、总字节数、包数、UTF-8 和 CRC32；
+- 文案限制为常用简体中文/GB2312 可显示字符，不允许 Emoji；
+- 长文本异常只回退到安全枚举，不得导致执行器动作。
+
+网关无法提供正文时可发送：
+
+```text
+V1|AI_TEXT_ERROR|REQ_ID|ERROR_CODE
+```
+
+兼容旧固件时，可用网关参数 `--no-ai-dialog` 完全关闭这些帧。
+
+## 8. AI 安全结果
 
 网关发送：
 
@@ -245,9 +287,10 @@ OBSERVE_PLANT
 V1|AI_RESULT|42|WARN|HOT_AND_BRIGHT|CHECK_SOIL|MOVE_TO_SHADE
 ```
 
-STM32 根据枚举更新 TFT、彩灯或蜂鸣器。完整英文解释只在电脑端显示和记录。
+STM32 根据枚举更新状态，并在长文本校验成功后显示“AI养护手记”对话框。
+枚举是可靠兜底；个性化台词用于解释和展示，不能覆盖规则或控制硬件。
 
-## 8. 错误帧
+## 9. 错误帧
 
 ```text
 V1|ERROR|REQ_ID|ERROR_CODE
@@ -278,7 +321,7 @@ V1|ERROR|42|MODEL_TIMEOUT
 
 收到错误后 STM32 结束当前 AI 请求并显示失败，不自动启动任何执行器。
 
-## 9. 调试消息
+## 10. 调试消息
 
 以下消息仅用于联调，可在正式演示中保留：
 
@@ -289,7 +332,7 @@ V1|PONG
 
 现有 `ON/OFF` 彩灯命令属于 WiFi 独立实验，不属于农业系统正式协议。农业系统状态灯由本地 `app_state` 决定，不接受模型任意控制。
 
-## 10. 接收状态机要求
+## 11. 接收状态机要求
 
 固件协议层建议状态：
 

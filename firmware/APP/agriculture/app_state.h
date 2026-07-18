@@ -97,6 +97,10 @@ typedef struct
 	char ai_issue[APP_STATE_TEXT_MEDIUM];
 	char ai_watering[APP_STATE_TEXT_MEDIUM];
 	char ai_advice[APP_STATE_TEXT_MEDIUM];
+	u8 ai_dialog_ready;
+	u8 ai_dialog_revision;
+	u16 ai_dialog_scroll_line;
+	char ai_dialog_error[APP_STATE_TEXT_MEDIUM];
 	char last_error[APP_STATE_TEXT_MEDIUM];
 
 	u8 ui_dirty;

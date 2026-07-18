@@ -8,6 +8,8 @@
 #define APP_DEFAULT_SPECIES_ID         "pothos"
 #define APP_DEFAULT_PLANT_NAME         "POTHOS"
 
+#define APP_UI_ENABLE_CHINESE           1
+
 #define APP_WIFI_SSID                  "0Range777"
 #define APP_WIFI_AP_SSID               "ESP07"
 #define APP_WIFI_AP_PASSWORD           "00000000"
@@ -19,6 +21,9 @@
 #define APP_UI_REFRESH_MIN_TICKS       10
 #define APP_AI_TIMEOUT_TICKS           4500
 #define APP_ASSET_TIMEOUT_TICKS        800
+#define APP_AI_DIALOG_ENABLE           1
+#define APP_AI_DIALOG_TIMEOUT_TICKS    800
+#define APP_AI_DIALOG_MAX_BYTES        768
 
 #define APP_LIGHT_DARK_MAX             29
 #define APP_LIGHT_NORMAL_MAX           69

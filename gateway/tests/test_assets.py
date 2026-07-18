@@ -18,6 +18,7 @@ FIRMWARE_ASSET_SOURCE = (
     / "agriculture"
     / "plant_assets_builtin.c"
 )
+FIRMWARE_MAIN_SOURCE = GATEWAY_ROOT.parent / "firmware" / "User" / "main.c"
 
 
 class PlantAssetTests(unittest.TestCase):
@@ -86,6 +87,15 @@ class PlantAssetTests(unittest.TestCase):
             firmware_payload = struct.pack(f">{len(values)}H", *values)
             gateway_payload = (ASSET_DIR / f"pothos_{state}.rgb565").read_bytes()
             self.assertEqual(firmware_payload, gateway_payload)
+
+    def test_firmware_downloads_every_non_pothos_asset(self) -> None:
+        source = FIRMWARE_MAIN_SOURCE.read_text(encoding="utf-8")
+        start = source.index("static u8 App_StartAssetRequest")
+        end = source.index("static void App_HandleAssetFailure", start)
+        policy = source[start:end]
+        self.assertIn('strcmp(app->species_id,"pothos")==0', policy)
+        self.assertNotIn("CACTUS TEST ONLY", policy)
+        self.assertNotIn('strcmp(app->species_id,"cactus")', policy)
 
 
 if __name__ == "__main__":

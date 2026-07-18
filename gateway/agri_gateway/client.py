@@ -26,6 +26,9 @@ PLANT_FRAME_PACE_SECONDS = 0.02
 ASSET_FRAME_PACE_SECONDS = 0.02
 ASSET_CHUNK_BYTES = 40
 ASSET_STATES = {"NORMAL", "ATTENTION", "DANGER"}
+AI_TEXT_FRAME_PACE_SECONDS = 0.08
+AI_TEXT_CHUNK_BYTES = 32
+AI_TEXT_MAX_BYTES = 768
 
 
 def log(category: str, message: str) -> None:
@@ -88,12 +91,33 @@ class GatewayClient:
         with socket.create_connection(address, timeout=5.0) as sock:
             sock.settimeout(self.config.socket_timeout_seconds)
             reader = SocketLineReader(sock)
+            last_device_activity = time.monotonic()
+            last_heartbeat = last_device_activity
             log("CONNECTION", "TCP connected; waiting for STM32 HELLO")
             while True:
-                for line in reader.receive():
+                lines = reader.receive()
+                for line in lines:
                     if not line:
                         continue
                     self._handle_line(sock, line)
+                    # Handling an AI request may legitimately take tens of seconds.
+                    # Refresh after the handler returns to avoid a false timeout.
+                    last_device_activity = time.monotonic()
+
+                now = time.monotonic()
+                if (
+                    now - last_device_activity
+                    >= self.config.heartbeat_timeout_seconds
+                ):
+                    raise ConnectionError("STM32 heartbeat timeout")
+                if (
+                    now - last_heartbeat
+                    >= self.config.heartbeat_interval_seconds
+                ):
+                    # This also wakes a restarted STM32 when ESP keeps the old
+                    # TCP link: the incoming +IPD lets firmware rediscover it.
+                    self._send(sock, "V1", "PING", log_payload=False)
+                    last_heartbeat = now
 
     @staticmethod
     def _send(
@@ -113,13 +137,17 @@ class GatewayClient:
             self._send(sock, "V1", "ERROR", exc.request_id, exc.code)
             return
 
-        log("RX", "|".join(fields))
         message_type = fields[1]
+        if message_type != "PONG":
+            log("RX", "|".join(fields))
         if fields == ["V1", "HELLO", "STM32", "READY"]:
             self._send(sock, "V1", "HELLO_ACK", "GATEWAY", "READY")
             log("GATEWAY", "READY")
         elif message_type == "PING" and len(fields) == 2:
             self._send(sock, "V1", "PONG")
+        elif message_type == "PONG" and len(fields) == 2:
+            # Heartbeats stay quiet in normal operation to avoid log spam.
+            return
         elif message_type in {"AI_REQ", "PLANT_AI_REQ"}:
             self._handle_ai_request(sock, fields)
         elif message_type == "PLANT_LIST_REQ":
@@ -409,6 +437,7 @@ class GatewayClient:
         self._send(sock, "V1", "AI_STAGE", request_id, "VALIDATING")
         log("MODEL", f"VALIDATED request={request_id} elapsed={elapsed:.2f}s")
         log("ADVICE", result.suggestion_en)
+        log("DIALOG", result.dialog_zh)
         try:
             self.repository.record_analysis(
                 request_id=request.request_id,
@@ -423,10 +452,13 @@ class GatewayClient:
                 watering=result.watering,
                 action_code=result.advice,
                 suggestion_en=result.suggestion_en,
+                dialog_zh=result.dialog_zh,
                 provider=self.config.provider,
             )
         except (PlantRepositoryError, sqlite3.Error) as exc:
             log("DATABASE", f"analysis log skipped request={request_id}: {exc}")
+        if self.config.ai_dialog_enabled:
+            self._send_ai_text(sock, request_id, result.dialog_zh)
         self._send(
             sock,
             "V1",
@@ -436,4 +468,54 @@ class GatewayClient:
             result.issue,
             result.watering,
             result.advice,
+        )
+
+    def _send_ai_text(
+        self, sock: socket.socket, request_id: int, dialog_zh: str
+    ) -> None:
+        payload = dialog_zh.encode("utf-8")
+        if not payload:
+            self._send(sock, "V1", "AI_TEXT_ERROR", request_id, "TEXT_SIZE_ERROR")
+            return
+        if len(payload) > AI_TEXT_MAX_BYTES:
+            payload = payload[:AI_TEXT_MAX_BYTES]
+            while payload:
+                try:
+                    payload.decode("utf-8")
+                    break
+                except UnicodeDecodeError:
+                    payload = payload[:-1]
+            log(
+                "DIALOG",
+                f"truncated request={request_id} bytes={len(payload)}",
+            )
+        crc32 = f"{zlib.crc32(payload) & 0xFFFFFFFF:08X}"
+        chunk_count = (len(payload) + AI_TEXT_CHUNK_BYTES - 1) // AI_TEXT_CHUNK_BYTES
+        self._send(
+            sock,
+            "V1",
+            "AI_TEXT_BEGIN",
+            request_id,
+            len(payload),
+            chunk_count,
+            crc32,
+        )
+        time.sleep(AI_TEXT_FRAME_PACE_SECONDS)
+        for sequence, offset in enumerate(range(0, len(payload), AI_TEXT_CHUNK_BYTES)):
+            chunk = payload[offset : offset + AI_TEXT_CHUNK_BYTES]
+            self._send(
+                sock,
+                "V1",
+                "AI_TEXT_CHUNK",
+                request_id,
+                sequence,
+                chunk.hex().upper(),
+                log_payload=False,
+            )
+            time.sleep(AI_TEXT_FRAME_PACE_SECONDS)
+        self._send(sock, "V1", "AI_TEXT_END", request_id, chunk_count, crc32)
+        log(
+            "DIALOG",
+            f"sent request={request_id} bytes={len(payload)} "
+            f"chunks={chunk_count} crc={crc32}",
         )

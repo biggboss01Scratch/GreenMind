@@ -5,9 +5,16 @@
 #define TOUCH_NAV_Y1          432
 #define TOUCH_ACTION_Y1       362
 #define TOUCH_ACTION_Y2       416
+#define TOUCH_AI_DIALOG_X1     24
+#define TOUCH_AI_DIALOG_Y1     170
+#define TOUCH_AI_DIALOG_X2     296
+#define TOUCH_AI_DIALOG_Y2     348
+#define TOUCH_SWIPE_MIN         24
 
 static u8 g_touch_was_pressed=0;
 static u8 g_touch_has_point=0;
+static u16 g_touch_start_x=0;
+static u16 g_touch_start_y=0;
 static u16 g_touch_x=0;
 static u16 g_touch_y=0;
 
@@ -92,17 +99,39 @@ void TouchService_Init(void)
 	g_touch_has_point=0;
 }
 
+static AppTouchEvent TouchService_Gesture(AppPage page)
+{
+	if(page!=APP_PAGE_AI ||
+	   !TouchService_InRect(g_touch_start_x,g_touch_start_y,
+	                        TOUCH_AI_DIALOG_X1,TOUCH_AI_DIALOG_Y1,
+	                        TOUCH_AI_DIALOG_X2,TOUCH_AI_DIALOG_Y2))
+		return APP_TOUCH_EVENT_NONE;
+	if(g_touch_start_y>g_touch_y &&
+	   (u16)(g_touch_start_y-g_touch_y)>=TOUCH_SWIPE_MIN)
+		return APP_TOUCH_EVENT_AI_DIALOG_SCROLL_DOWN;
+	if(g_touch_y>g_touch_start_y &&
+	   (u16)(g_touch_y-g_touch_start_y)>=TOUCH_SWIPE_MIN)
+		return APP_TOUCH_EVENT_AI_DIALOG_SCROLL_UP;
+	return APP_TOUCH_EVENT_NONE;
+}
+
 AppTouchEvent TouchService_Task(AppPage page)
 {
+	AppTouchEvent gesture;
 	if(TP_Scan(0))
 	{
-		g_touch_was_pressed=1;
 		if(tp_dev.x[0]<tftlcd_data.width && tp_dev.y[0]<tftlcd_data.height)
 		{
+			if(!g_touch_has_point)
+			{
+				g_touch_start_x=tp_dev.x[0];
+				g_touch_start_y=tp_dev.y[0];
+			}
 			g_touch_x=tp_dev.x[0];
 			g_touch_y=tp_dev.y[0];
 			g_touch_has_point=1;
 		}
+		g_touch_was_pressed=1;
 		return APP_TOUCH_EVENT_NONE;
 	}
 
@@ -112,6 +141,8 @@ AppTouchEvent TouchService_Task(AppPage page)
 		if(g_touch_has_point)
 		{
 			g_touch_has_point=0;
+			gesture=TouchService_Gesture(page);
+			if(gesture!=APP_TOUCH_EVENT_NONE)return gesture;
 			return TouchService_HitTest(page,g_touch_x,g_touch_y);
 		}
 	}

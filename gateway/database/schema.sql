@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS ai_analysis_logs (
     watering TEXT,
     action_code TEXT,
     suggestion_en TEXT,
+    dialog_zh TEXT,
     provider TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

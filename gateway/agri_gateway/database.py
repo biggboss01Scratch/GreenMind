@@ -263,6 +263,14 @@ def initialize_database(
 
     with database_session(database_path) as connection:
         connection.executescript(schema)
+        log_columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(ai_analysis_logs)")
+        }
+        if "dialog_zh" not in log_columns:
+            connection.execute(
+                "ALTER TABLE ai_analysis_logs ADD COLUMN dialog_zh TEXT"
+            )
         connection.execute(
             """
             INSERT INTO schema_meta(key, value) VALUES ('schema_version', ?)

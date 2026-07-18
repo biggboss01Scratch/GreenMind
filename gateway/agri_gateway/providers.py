@@ -51,6 +51,8 @@ ADVICE_MAP = {
     "observe_plant": "OBSERVE_PLANT",
 }
 SUGGESTION_MAX_CHARS = 160
+DIALOG_MAX_BYTES = 768
+DIALOG_MIN_CHARS = 24
 SUGGESTION_REPLACEMENTS = {
     "°C": " degrees C",
     "°F": " degrees F",
@@ -63,6 +65,15 @@ SUGGESTION_REPLACEMENTS = {
     "\u2014": "-",
     "\u2026": "...",
     "\u00a0": " ",
+}
+
+PLANT_FUN_FACTS = {
+    "pothos": "绿萝会用气生根攀援，明亮的散射光更容易让叶片舒展",
+    "mint": "薄荷的清凉香气藏在叶片腺体里，勤修剪和通风会让它长得更紧凑",
+    "succulent": "多肉把水分储在肥厚叶片里，比起频繁浇水，它更喜欢干湿分明",
+    "cactus": "仙人掌用肉质茎储水，刺还能减少水分散失，因此最怕盆土长期潮湿",
+    "orchid": "蝴蝶兰的气生根也会参与呼吸，透气和避免叶心积水都很重要",
+    "tomato": "番茄在开花结果期尤其喜欢充足光照和空气流动，这会帮助它稳定结果",
 }
 
 
@@ -79,6 +90,7 @@ class AnalysisResult:
     watering: str
     advice: str
     suggestion_en: str
+    dialog_zh: str
 
 
 class ModelProvider(Protocol):
@@ -118,7 +130,80 @@ class MockProvider:
             assessment.watering,
             assessment.advice,
             assessment.suggestion_en,
+            build_fallback_dialog_zh(request, plant, assessment),
         )
+
+
+def _truncate_utf8(text: str, max_bytes: int) -> str:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    shortened = encoded[:max_bytes]
+    while shortened:
+        try:
+            return shortened.decode("utf-8").rstrip("，。；、： ")
+        except UnicodeDecodeError:
+            shortened = shortened[:-1]
+    return ""
+
+
+def _gb2312_safe_text(value: object) -> str:
+    text = str(value).replace("\r", " ").replace("\n", " ").replace("|", "，")
+    text = " ".join(text.split())
+    safe: list[str] = []
+    for character in text:
+        if ord(character) < 0x20:
+            continue
+        try:
+            character.encode("gb2312")
+        except UnicodeEncodeError:
+            safe.append("?")
+        else:
+            safe.append(character)
+    return "".join(safe)
+
+
+def build_fallback_dialog_zh(
+    request: SensorRequest,
+    plant: PlantDetails,
+    assessment: PlantAssessment,
+) -> str:
+    name = plant.summary.name_zh
+    fact = PLANT_FUN_FACTS.get(
+        plant.summary.species_id,
+        f"{name}有自己的生长节奏，稳定观察往往比频繁调整更重要",
+    )
+    if assessment.issue == "LIGHT_HIGH":
+        observation = "现在的光照比它的档案范围偏强，可以移到柔和的散射光处"
+    elif assessment.issue == "LIGHT_LOW":
+        observation = "现在的光照低于它的偏好，可以逐步增加明亮但不过晒的光线"
+    elif assessment.issue in {"TEMP_HIGH", "HOT_AND_BRIGHT"}:
+        observation = "当前温度偏高，先避开强光并加强通风，让叶片慢慢降温"
+    elif assessment.issue == "TEMP_LOW":
+        observation = "当前温度偏低，尽量远离冷风和温差突然变化的位置"
+    elif assessment.issue == "HUMIDITY_HIGH":
+        observation = "空气湿度偏高，保持通风并留意叶面是否长时间潮湿"
+    elif assessment.issue == "HUMIDITY_LOW":
+        observation = "空气湿度偏低，但浇水前仍要单独摸一摸盆土，别把空气干当成缺水"
+    else:
+        observation = "温度、空气湿度和光照都比较合拍，保持现在的摆放并继续观察即可"
+    dialog = (
+        f"我是{name}。现在温度{request.temperature}度、空气湿度"
+        f"{request.humidity}%、光照{request.light}%，{observation}。"
+        f"小知识：{fact}。养护档案还提醒我：{plant.care_summary_zh}"
+        "今天先调整最关键的一项，过一阵再看看叶片和盆土的反应，不用一次改变太多。"
+    )
+    return _truncate_utf8(_gb2312_safe_text(dialog), DIALOG_MAX_BYTES)
+
+
+def normalize_dialog_zh(value: object, fallback: str) -> str:
+    dialog = _gb2312_safe_text(value)
+    if len(dialog) < DIALOG_MIN_CHARS:
+        dialog = fallback
+    dialog = _truncate_utf8(dialog, DIALOG_MAX_BYTES)
+    if len(dialog) < DIALOG_MIN_CHARS:
+        dialog = _truncate_utf8(fallback, DIALOG_MAX_BYTES)
+    return dialog
 
 
 class DeepSeekProvider:
@@ -139,7 +224,7 @@ class DeepSeekProvider:
                 content = self._request(request, plant, assessment)
                 if not content.strip():
                     raise ProviderError("MODEL_EMPTY_OUTPUT")
-                return self._validate(json.loads(content), assessment)
+                return self._validate(json.loads(content), request, plant, assessment)
             except json.JSONDecodeError as exc:
                 last_error = ProviderError("MODEL_BAD_OUTPUT")
                 last_error.__cause__ = exc
@@ -161,8 +246,15 @@ class DeepSeekProvider:
             "or action code. Air humidity is not soil moisture, so watering advice may "
             "only recommend checking the soil. Never control a pump or any hardware. "
             "Return only one JSON object with no extra text. The required fields are "
-            "status, main_issue, watering_advice, advice_code, and suggestion_en. Use "
+            "status, main_issue, watering_advice, advice_code, suggestion_en, and "
+            "dialog_zh. Use "
             "plain ASCII English for suggestion_en and keep it within 160 characters. "
+            "dialog_zh must be 100 to 180 Chinese characters in common Simplified Chinese "
+            "that can be represented by GB2312. Write it like a warm visual-novel plant "
+            "dialogue: mention the current readings, explain how they fit this species, "
+            "include one genuinely species-specific fun care fact, and finish with one "
+            "safe actionable suggestion. Light personification is welcome, but do not "
+            "be childish. Do not use emoji, vertical bars, or line breaks. "
             "status must be one of normal/warning/danger/error; "
             f"main_issue must be one of {list(ISSUE_MAP)}; "
             f"watering_advice must be one of {list(WATERING_MAP)}; "
@@ -180,7 +272,10 @@ class DeepSeekProvider:
             f"main_issue={next(key for key, value in ISSUE_MAP.items() if value == assessment.issue)}, "
             f"watering_advice={next(key for key, value in WATERING_MAP.items() if value == assessment.watering)}, "
             f"advice_code={next(key for key, value in ADVICE_MAP.items() if value == assessment.advice)}. "
-            "Return the same enums and a short plant-specific explanation."
+            f"Plant description: {plant.description_zh}. Care profile: "
+            f"{plant.care_summary_zh}. Known risks: {'；'.join(plant.risk_notes)}. "
+            "Return the same enums, a short English explanation, and the requested "
+            "personalized Chinese dialogue."
         )
         payload = {
             "model": self._model,
@@ -190,8 +285,8 @@ class DeepSeekProvider:
             ],
             "response_format": {"type": "json_object"},
             "thinking": {"type": "disabled"},
-            "max_tokens": 300,
-            "temperature": 0.2,
+            "max_tokens": 700,
+            "temperature": 0.6,
             "stream": False,
         }
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -246,17 +341,26 @@ class DeepSeekProvider:
         return suggestion
 
     @staticmethod
-    def _validate(data: object, assessment: PlantAssessment) -> AnalysisResult:
+    def _validate(
+        data: object,
+        request: SensorRequest,
+        plant: PlantDetails,
+        assessment: PlantAssessment,
+    ) -> AnalysisResult:
         if not isinstance(data, dict):
             raise ProviderError("MODEL_BAD_OUTPUT")
+        fallback_dialog = build_fallback_dialog_zh(request, plant, assessment)
         try:
             status = STATUS_MAP[str(data["status"])]
             issue = ISSUE_MAP[str(data["main_issue"])]
             watering = WATERING_MAP[str(data["watering_advice"])]
             advice = ADVICE_MAP[str(data["advice_code"])]
-            suggestion = DeepSeekProvider._normalize_suggestion(data["suggestion_en"])
         except (KeyError, TypeError) as exc:
             raise ProviderError("MODEL_BAD_OUTPUT") from exc
+        suggestion = DeepSeekProvider._normalize_suggestion(
+            data.get("suggestion_en", "")
+        )
+        dialog = normalize_dialog_zh(data.get("dialog_zh", ""), fallback_dialog)
         if not suggestion:
             suggestion = assessment.suggestion_en
         if (
@@ -271,10 +375,12 @@ class DeepSeekProvider:
             assessment.advice,
         ):
             suggestion = assessment.suggestion_en
+            dialog = fallback_dialog
         return AnalysisResult(
             assessment.status,
             assessment.issue,
             assessment.watering,
             assessment.advice,
             suggestion,
+            dialog,
         )

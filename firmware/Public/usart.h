@@ -16,7 +16,7 @@ extern char WiFi_STA_IP[16];
 
 #define WIFI_TCP_RX_BUFFER_SIZE  128
 #define WIFI_TCP_TX_BUFFER_SIZE  160
-#define WIFI_TCP_STREAM_BUFFER_SIZE  256
+#define WIFI_TCP_STREAM_BUFFER_SIZE  1024
 
 extern volatile u8 WiFi_TCP_LinkValid;
 extern volatile u8 WiFi_TCP_LinkId;

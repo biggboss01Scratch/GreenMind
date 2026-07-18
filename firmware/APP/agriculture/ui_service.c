@@ -1,7 +1,10 @@
 #include "ui_service.h"
 #include "app_config.h"
 #include "asset_service.h"
+#include "ai_text_service.h"
+#include "font_service.h"
 #include "plant_assets_builtin.h"
+#include "ui_strings_zh.h"
 #include "tftlcd.h"
 #include <stdio.h>
 #include <string.h>
@@ -26,6 +29,13 @@
 
 #define UI_NAV_Y1      432
 #define UI_NAV_Y2      479
+#define UI_AI_DIALOG_TEXT_X       34
+#define UI_AI_DIALOG_TEXT_Y       234
+#define UI_AI_DIALOG_TEXT_WIDTH   246
+#define UI_AI_DIALOG_VISIBLE_LINES 6
+#define UI_AI_DIALOG_LINE_HEIGHT  18
+#define UI_AI_DIALOG_TRACK_Y1     234
+#define UI_AI_DIALOG_TRACK_Y2     341
 
 #define UI_PLANT_GOOD       0
 #define UI_PLANT_ATTENTION  1
@@ -35,6 +45,9 @@
 
 static AppState g_last_state;
 static u8 g_render_cache_valid=0;
+static u8 g_chinese_font_ready=0;
+
+static void UiService_DrawPlantMiniIcon(u16 x,u16 y,const char *species_id);
 
 static void UiService_Text(u16 x,u16 y,u8 size,const char *text,u16 color,u16 background)
 {
@@ -50,6 +63,63 @@ static void UiService_TextCentered(u16 x1,u16 x2,u16 y,u8 size,
 	u16 x=x1;
 	if(text_width<(u16)(x2-x1+1))x=(u16)(x1+(x2-x1+1-text_width)/2);
 	UiService_Text(x,y,size,text,color,background);
+}
+
+static u8 UiService_ChineseEnabled(void)
+{
+#if APP_UI_ENABLE_CHINESE
+	return g_chinese_font_ready;
+#else
+	return 0;
+#endif
+}
+
+static void UiService_LocalText(u16 x,u16 y,u8 scale,const u8 *zh,
+	                            const char *en,u16 color,u16 background)
+{
+	if(UiService_ChineseEnabled())
+		FontService_DrawUtf8(x,y,zh,scale,color,background);
+	else UiService_Text(x,y,(u8)(12*scale),en,color,background);
+}
+
+static void UiService_LocalTextCentered(u16 x1,u16 x2,u16 y,u8 scale,
+	                                    const u8 *zh,const char *en,
+	                                    u16 color,u16 background)
+{
+	u16 text_width;
+	u16 x=x1;
+
+	if(UiService_ChineseEnabled())
+	{
+		text_width=FontService_MeasureUtf8(zh,scale);
+		if(text_width<(u16)(x2-x1+1))
+			x=(u16)(x1+(x2-x1+1-text_width)/2);
+		FontService_DrawUtf8(x,y,zh,scale,color,background);
+	}
+	else UiService_TextCentered(x1,x2,y,(u8)(12*scale),en,color,background);
+}
+
+static void UiService_Utf8Text(u16 x,u16 y,const u8 *text,u16 color,
+	                           u16 background)
+{
+	FontService_DrawUtf8(x,y,text,1,color,background);
+}
+
+static void UiService_Utf8TextScaledCentered(u16 x1,u16 x2,u16 y,
+	                                         const u8 *text,u8 scale,
+	                                         u16 color,u16 background)
+{
+	u16 text_width=FontService_MeasureUtf8(text,scale);
+	u16 x=x1;
+	if(text_width<(u16)(x2-x1+1))
+		x=(u16)(x1+(x2-x1+1-text_width)/2);
+	FontService_DrawUtf8(x,y,text,scale,color,background);
+}
+
+static void UiService_Utf8TextCentered(u16 x1,u16 x2,u16 y,const u8 *text,
+	                                   u16 color,u16 background)
+{
+	UiService_Utf8TextScaledCentered(x1,x2,y,text,1,color,background);
 }
 
 static void UiService_ClearRect(u16 x1,u16 y1,u16 x2,u16 y2,u16 color)
@@ -104,22 +174,25 @@ static void UiService_Card(u16 x1,u16 y1,u16 x2,u16 y2)
 	UiService_FillRoundRect(x1,y1,x2,y2,12,UI_CARD);
 }
 
-static void UiService_Button(u16 x1,u16 y1,u16 x2,u16 y2,
-	                         const char *label,u16 color,u8 enabled)
+static void UiService_LocalButton(u16 x1,u16 y1,u16 x2,u16 y2,
+	                              const u8 *zh,const char *en,
+	                              u16 color,u8 enabled)
 {
 	u16 background=enabled?color:UI_DISABLED;
 	UiService_FillRoundRect((u16)(x1+2),(u16)(y1+3),
 	                        (u16)(x2+2),(u16)(y2+3),12,UI_SHADOW);
 	UiService_FillRoundRect(x1,y1,x2,y2,12,background);
-	UiService_TextCentered(x1,x2,(u16)(y1+18),16,label,
-	                       enabled?WHITE:UI_MUTED,background);
+	UiService_LocalTextCentered(x1,x2,(u16)(y1+21),1,zh,en,
+	                            enabled?WHITE:UI_MUTED,background);
 }
 
-static void UiService_Pill(u16 x1,u16 y1,u16 x2,u16 y2,
-	                       const char *label,u16 color,u16 text_color)
+static void UiService_LocalPill(u16 x1,u16 y1,u16 x2,u16 y2,
+	                            const u8 *zh,const char *en,
+	                            u16 color,u16 text_color)
 {
 	UiService_FillRoundRect(x1,y1,x2,y2,(u8)((y2-y1+1)/2),color);
-	UiService_TextCentered(x1,x2,(u16)(y1+5),12,label,text_color,color);
+	UiService_LocalTextCentered(x1,x2,(u16)(y1+5),1,zh,en,
+	                            text_color,color);
 }
 
 static void UiService_DrawNavTab(u8 index,const char *label,AppPage active)
@@ -128,9 +201,13 @@ static void UiService_DrawNavTab(u8 index,const char *label,AppPage active)
 	u16 x2=(u16)((index+1)*80-5);
 	u16 background=((u8)active==index)?UI_HEADER:UI_CARD;
 	u16 color=((u8)active==index)?WHITE:UI_MUTED;
+	const u8 *zh=GM_ZH_NAV_HOME;
 	if((u8)active==index)
 		UiService_FillRoundRect(x1,438,x2,474,10,background);
-	UiService_TextCentered(x1,x2,449,12,label,color,background);
+	if(index==1)zh=GM_ZH_NAV_DETAIL;
+	else if(index==2)zh=GM_ZH_NAV_AI;
+	else if(index==3)zh=GM_ZH_NAV_SYSTEM;
+	UiService_LocalTextCentered(x1,x2,449,1,zh,label,color,background);
 }
 
 static void UiService_DrawNavigation(AppPage active)
@@ -145,10 +222,15 @@ static void UiService_DrawNavigation(AppPage active)
 
 static void UiService_Base(const char *title,AppPage page)
 {
+	const u8 *zh=GM_ZH_TITLE_DETAIL;
+	if(page==APP_PAGE_AI)zh=GM_ZH_TITLE_AI;
+	else if(page==APP_PAGE_SYSTEM)zh=GM_ZH_TITLE_SYSTEM;
+	else if(page==APP_PAGE_PLANT_LIBRARY)zh=GM_ZH_TITLE_LIBRARY;
+	else if(page==APP_PAGE_PLANT_PROFILE)zh=GM_ZH_TITLE_PROFILE;
 	LCD_Clear(UI_BG);
 	UiService_FillRoundRect(11,9,314,57,14,UI_SHADOW);
 	UiService_FillRoundRect(8,6,311,54,14,UI_HEADER);
-	UiService_TextCentered(0,319,14,24,title,WHITE,UI_HEADER);
+	UiService_LocalTextCentered(0,319,14,2,zh,title,WHITE,UI_HEADER);
 	UiService_Card(10,64,309,422);
 	UiService_DrawNavigation(page);
 }
@@ -196,6 +278,112 @@ static const char *UiService_EnvironmentText(const AppState *state)
 		case UI_PLANT_ATTENTION:return "PLANT NEEDS ATTENTION";
 		default:return "ENVIRONMENT GOOD";
 	}
+}
+
+static const u8 *UiService_EnvironmentZh(const AppState *state)
+{
+	switch(UiService_PlantMode(state))
+	{
+		case UI_PLANT_THINKING:return GM_ZH_ENV_THINKING;
+		case UI_PLANT_ERROR:return GM_ZH_ENV_SENSOR_ERROR;
+		case UI_PLANT_DANGER:return GM_ZH_ENV_DANGER;
+		case UI_PLANT_ATTENTION:return GM_ZH_ENV_ATTENTION;
+		default:return GM_ZH_ENV_GOOD;
+	}
+}
+
+static const u8 *UiService_PlantNameZh(const char *species_id)
+{
+	if(strcmp(species_id,"mint")==0)return GM_ZH_MINT;
+	if(strcmp(species_id,"succulent")==0)return GM_ZH_SUCCULENT;
+	if(strcmp(species_id,"cactus")==0)return GM_ZH_CACTUS;
+	if(strcmp(species_id,"orchid")==0)return GM_ZH_ORCHID;
+	if(strcmp(species_id,"tomato")==0)return GM_ZH_TOMATO;
+	return GM_ZH_POTHOS;
+}
+
+static const u8 *UiService_SourceZh(const char *source)
+{
+	if(strcmp(source,"ONLINE")==0)return GM_ZH_ONLINE;
+	return GM_ZH_BUILTIN;
+}
+
+static const u8 *UiService_AiStateZh(AppAiState state)
+{
+	switch(state)
+	{
+		case APP_AI_SENDING:return GM_ZH_AI_SENDING;
+		case APP_AI_PREPARING:return GM_ZH_AI_PREPARING;
+		case APP_AI_THINKING:return GM_ZH_AI_THINKING;
+		case APP_AI_VALIDATING:return GM_ZH_AI_VALIDATING;
+		case APP_AI_DONE:return GM_ZH_AI_DONE;
+		case APP_AI_TIMEOUT:return GM_ZH_AI_TIMEOUT;
+		case APP_AI_ERROR:return GM_ZH_AI_ERROR;
+		default:return GM_ZH_AI_IDLE;
+	}
+}
+
+static const u8 *UiService_StatusZh(const char *status)
+{
+	if(strcmp(status,"NORMAL")==0)return GM_ZH_NORMAL;
+	if(strcmp(status,"WARN")==0)return GM_ZH_WARNING;
+	if(strcmp(status,"DANGER")==0)return GM_ZH_DANGER;
+	if(strcmp(status,"ERROR")==0)return GM_ZH_ERROR;
+	if(strcmp(status,"-")==0)return GM_ZH_NONE;
+	return GM_ZH_UNKNOWN;
+}
+
+static const u8 *UiService_IssueZh(const char *issue)
+{
+	if(strcmp(issue,"NONE")==0 || strcmp(issue,"-")==0)return GM_ZH_NONE;
+	if(strcmp(issue,"TEMP_LOW")==0)return GM_ZH_TEMP_LOW;
+	if(strcmp(issue,"TEMP_HIGH")==0)return GM_ZH_TEMP_HIGH;
+	if(strcmp(issue,"HUMIDITY_LOW")==0)return GM_ZH_HUMIDITY_LOW;
+	if(strcmp(issue,"HUMIDITY_HIGH")==0)return GM_ZH_HUMIDITY_HIGH;
+	if(strcmp(issue,"LIGHT_LOW")==0)return GM_ZH_LIGHT_LOW;
+	if(strcmp(issue,"LIGHT_HIGH")==0)return GM_ZH_LIGHT_HIGH;
+	if(strcmp(issue,"HOT_AND_BRIGHT")==0)return GM_ZH_HOT_AND_BRIGHT;
+	if(strcmp(issue,"SENSOR_INVALID")==0)return GM_ZH_SENSOR_INVALID;
+	return GM_ZH_UNKNOWN;
+}
+
+static const u8 *UiService_WateringZh(const char *watering)
+{
+	if(strcmp(watering,"NO_NEED")==0)return GM_ZH_NO_NEED;
+	if(strcmp(watering,"CHECK_SOIL")==0)return GM_ZH_CHECK_SOIL;
+	if(strcmp(watering,"WATER_IF_DRY")==0)return GM_ZH_WATER_IF_DRY;
+	if(strcmp(watering,"-")==0)return GM_ZH_NONE;
+	return GM_ZH_UNKNOWN;
+}
+
+static const u8 *UiService_AdviceZh(const char *advice)
+{
+	if(strcmp(advice,"KEEP_CURRENT")==0)return GM_ZH_KEEP_CURRENT;
+	if(strcmp(advice,"MOVE_TO_SHADE")==0)return GM_ZH_MOVE_TO_SHADE;
+	if(strcmp(advice,"INCREASE_LIGHT")==0)return GM_ZH_INCREASE_LIGHT;
+	if(strcmp(advice,"IMPROVE_VENTILATION")==0)
+		return GM_ZH_IMPROVE_VENTILATION;
+	if(strcmp(advice,"CHECK_SOIL")==0)return GM_ZH_CHECK_SOIL;
+	if(strcmp(advice,"CHECK_SENSOR")==0)return GM_ZH_CHECK_SENSOR;
+	if(strcmp(advice,"OBSERVE_PLANT")==0)return GM_ZH_OBSERVE_PLANT;
+	if(strcmp(advice,"-")==0)return GM_ZH_KEEP_CURRENT_SETUP;
+	return GM_ZH_UNKNOWN;
+}
+
+static const u8 *UiService_WifiStatusZh(const char *status)
+{
+	if(strcmp(status,"ESP STARTING")==0)return GM_ZH_WIFI_STARTING;
+	if(strcmp(status,"SEARCHING")==0)return GM_ZH_WIFI_SEARCHING;
+	if(strcmp(status,"SCANNING")==0)return GM_ZH_WIFI_SCANNING;
+	if(strcmp(status,"TARGET NOT FOUND")==0)return GM_ZH_WIFI_NOT_FOUND;
+	if(strcmp(status,"CONNECTING")==0)return GM_ZH_WIFI_CONNECTING;
+	if(strcmp(status,"CONNECT FAILED")==0)return GM_ZH_WIFI_CONNECT_FAILED;
+	if(strcmp(status,"CONNECTED")==0)return GM_ZH_WIFI_CONNECTED;
+	if(strcmp(status,"RETRY REQUESTED")==0)return GM_ZH_WIFI_RETRY;
+	if(strncmp(status,"INIT:",5)==0)return GM_ZH_WIFI_INITIALIZING;
+	if(strncmp(status,"ERROR:",6)==0)return GM_ZH_WIFI_MODULE_ERROR;
+	if(strncmp(status,"TIMEOUT:",8)==0)return GM_ZH_WIFI_TIMEOUT;
+	return GM_ZH_UNKNOWN;
 }
 
 static void UiService_Pixel(u16 x,u16 y,u16 width,u16 height,u16 color)
@@ -380,23 +568,59 @@ static void UiService_DrawHomePlant(const AppState *state)
 	UiService_FillRoundRect(86,68,234,216,18,UI_HERO);
 	if(!UiService_DrawCurrentPlantAsset(state))
 		UiService_DrawFallbackPlant(state);
-	UiService_Pill(94,72,140,94,state->plant_name,UI_CARD,UI_GREEN_DARK);
+	UiService_LocalPill(94,72,146,94,
+	                    UiService_PlantNameZh(state->species_id),
+	                    state->plant_name,UI_CARD,UI_GREEN_DARK);
 	if(strcmp(state->species_id,"pothos")!=0 &&
 	   strcmp(state->asset_status,"LOADING")==0)
-		UiService_Pill(160,72,228,94,"LOADING",UI_WARN,UI_TEXT);
+		UiService_LocalPill(154,72,228,94,GM_ZH_LOADING,
+		                    "LOADING",UI_WARN,UI_TEXT);
 	else if(strcmp(state->species_id,"pothos")!=0 &&
 	        strcmp(state->asset_status,"ERROR")==0)
-		UiService_Pill(160,72,228,94,"IMG ERROR",UI_ERROR,WHITE);
+		UiService_LocalPill(154,72,228,94,GM_ZH_IMAGE_ERROR,
+		                    "IMG ERROR",UI_ERROR,WHITE);
 	UiService_ClearRect(60,218,260,243,UI_CARD);
 	UiService_FillRoundRect(60,218,260,242,10,color);
-	UiService_TextCentered(60,260,222,16,UiService_EnvironmentText(state),
-	                       text_color,color);
+	UiService_LocalTextCentered(60,260,224,1,
+	                            UiService_EnvironmentZh(state),
+	                            UiService_EnvironmentText(state),
+	                            text_color,color);
 }
 
 static void UiService_DrawHomeValues(const AppState *state)
 {
 	char line[48];
+	u8 zh_line[96];
 	UiService_ClearRect(24,246,296,286,UI_CARD);
+	if(UiService_ChineseEnabled())
+	{
+		if(state->dht_valid)
+			sprintf((char *)zh_line,"%s %u C   %s %u %%",
+			        (char *)GM_ZH_TEMPERATURE,
+			        (unsigned int)state->temperature,
+			        (char *)GM_ZH_AIR_HUMIDITY,
+			        (unsigned int)state->humidity);
+		else sprintf((char *)zh_line,"%s --   %s --",
+		             (char *)GM_ZH_TEMPERATURE,
+		             (char *)GM_ZH_AIR_HUMIDITY);
+		UiService_Utf8TextCentered(24,296,250,zh_line,
+		                           state->dht_valid?UI_TEXT:UI_ERROR,UI_CARD);
+
+		if(state->light_valid)
+			sprintf((char *)zh_line,"%s %u %%   %s",
+			        (char *)GM_ZH_RELATIVE_LIGHT,
+			        (unsigned int)state->light,
+			        (char *)(state->gateway_ready?
+			                 GM_ZH_AI_READY:GM_ZH_AI_OFFLINE));
+		else sprintf((char *)zh_line,"%s --   %s",
+		             (char *)GM_ZH_RELATIVE_LIGHT,
+		             (char *)(state->gateway_ready?
+		                      GM_ZH_AI_READY:GM_ZH_AI_OFFLINE));
+		UiService_Utf8TextCentered(24,296,272,zh_line,
+		                           state->light_valid?UI_TEXT:UI_ERROR,UI_CARD);
+		return;
+	}
+
 	if(state->dht_valid)
 		sprintf(line,"TEMP %u C        HUMIDITY %u %%",
 		        (unsigned int)state->temperature,
@@ -419,7 +643,16 @@ static void UiService_DrawHomeAdvice(const AppState *state)
 {
 	const char *advice=state->ai_advice;
 	char title[48];
+	u8 zh_title[72];
 	UiService_ClearRect(24,294,296,350,UI_CARD);
+	if(UiService_ChineseEnabled())
+	{
+		sprintf((char *)zh_title,"%s - %s",(char *)GM_ZH_MAIN_ADVICE,
+		        (char *)UiService_PlantNameZh(state->species_id));
+		UiService_Utf8Text(28,296,zh_title,UI_MUTED,UI_CARD);
+		UiService_Utf8Text(28,321,UiService_AdviceZh(advice),UI_TEXT,UI_CARD);
+		return;
+	}
 	sprintf(title,"MAIN ADVICE - %s",state->plant_name);
 	UiService_Text(28,296,12,title,UI_MUTED,UI_CARD);
 	if(strcmp(advice,"-")==0)
@@ -429,10 +662,12 @@ static void UiService_DrawHomeAdvice(const AppState *state)
 
 static void UiService_DrawHomeButtons(const AppState *state)
 {
-	UiService_Button(18,362,151,416,"DETAIL",UI_GREEN_DARK,1);
-	UiService_Button(169,362,302,416,
-	                 UiService_AiActive(state)?"WORKING":"ASK AI",
-	                 UI_HEADER,(u8)!UiService_AiActive(state));
+	UiService_LocalButton(18,362,151,416,GM_ZH_DETAIL,
+	                      "DETAIL",UI_GREEN_DARK,1);
+	UiService_LocalButton(169,362,302,416,
+	                      UiService_AiActive(state)?GM_ZH_WORKING:GM_ZH_ASK_AI,
+	                      UiService_AiActive(state)?"WORKING":"ASK AI",
+	                      UI_HEADER,(u8)!UiService_AiActive(state));
 }
 
 static void UiService_RenderHomeFull(const AppState *state)
@@ -513,8 +748,26 @@ static void UiService_ProgressBar(u16 y,u8 percent,u16 color)
 static void UiService_DrawDetailTemperature(const AppState *state)
 {
 	char line[32];
+	u8 zh_line[64];
 	u8 percent=0;
 	UiService_ClearRect(24,96,296,164,UI_CARD);
+	if(UiService_ChineseEnabled())
+	{
+		if(state->dht_valid)
+		{
+			sprintf((char *)zh_line,"%s                 %u C",
+			        (char *)GM_ZH_TEMPERATURE,
+			        (unsigned int)state->temperature);
+			percent=(state->temperature>=50)?100:
+			        (u8)(state->temperature*2);
+		}
+		else sprintf((char *)zh_line,"%s                 --",
+		             (char *)GM_ZH_TEMPERATURE);
+		UiService_Utf8Text(24,98,zh_line,
+		                   state->dht_valid?UI_TEXT:UI_ERROR,UI_CARD);
+	}
+	else
+	{
 	if(state->dht_valid)
 	{
 		sprintf(line,"TEMPERATURE             %u C",
@@ -523,46 +776,89 @@ static void UiService_DrawDetailTemperature(const AppState *state)
 	}
 	else sprintf(line,"TEMPERATURE             --");
 	UiService_Text(24,96,16,line,state->dht_valid?UI_TEXT:UI_ERROR,UI_CARD);
+	}
 	UiService_ProgressBar(122,percent,UiService_TemperatureColor(state));
-	UiService_Text(24,148,12,
-	               !state->dht_valid?"SENSOR ERROR":
-	               (state->temperature<18?"LOW":
-	                (state->temperature>=30?"HIGH":"NORMAL RANGE")),
-	               UiService_TemperatureColor(state),UI_CARD);
+	UiService_LocalText(24,148,1,
+	                    !state->dht_valid?GM_ZH_SENSOR_ERROR:
+	                    (state->temperature<18?GM_ZH_LOW:
+	                     (state->temperature>=30?GM_ZH_HIGH:
+	                      GM_ZH_NORMAL_RANGE)),
+	                    !state->dht_valid?"SENSOR ERROR":
+	                    (state->temperature<18?"LOW":
+	                     (state->temperature>=30?"HIGH":"NORMAL RANGE")),
+	                    UiService_TemperatureColor(state),UI_CARD);
 }
 
 static void UiService_DrawDetailHumidity(const AppState *state)
 {
 	char line[32];
+	u8 zh_line[64];
 	u8 percent=state->dht_valid?state->humidity:0;
 	UiService_ClearRect(24,180,296,248,UI_CARD);
+	if(UiService_ChineseEnabled())
+	{
+		if(state->dht_valid)
+			sprintf((char *)zh_line,"%s             %u %%",
+			        (char *)GM_ZH_AIR_HUMIDITY,
+			        (unsigned int)state->humidity);
+		else sprintf((char *)zh_line,"%s             --",
+		             (char *)GM_ZH_AIR_HUMIDITY);
+		UiService_Utf8Text(24,182,zh_line,
+		                   state->dht_valid?UI_TEXT:UI_ERROR,UI_CARD);
+	}
+	else
+	{
 	if(state->dht_valid)
 		sprintf(line,"HUMIDITY                %u %%",
 		        (unsigned int)state->humidity);
 	else sprintf(line,"HUMIDITY                --");
 	UiService_Text(24,180,16,line,state->dht_valid?UI_TEXT:UI_ERROR,UI_CARD);
+	}
 	UiService_ProgressBar(206,percent,UiService_HumidityColor(state));
-	UiService_Text(24,232,12,
-	               !state->dht_valid?"SENSOR ERROR":
-	               (state->humidity<35?"LOW":
-	                (state->humidity>80?"HIGH":"NORMAL RANGE")),
-	               UiService_HumidityColor(state),UI_CARD);
+	UiService_LocalText(24,232,1,
+	                    !state->dht_valid?GM_ZH_SENSOR_ERROR:
+	                    (state->humidity<35?GM_ZH_LOW:
+	                     (state->humidity>80?GM_ZH_HIGH:
+	                      GM_ZH_NORMAL_RANGE)),
+	                    !state->dht_valid?"SENSOR ERROR":
+	                    (state->humidity<35?"LOW":
+	                     (state->humidity>80?"HIGH":"NORMAL RANGE")),
+	                    UiService_HumidityColor(state),UI_CARD);
 }
 
 static void UiService_DrawDetailLight(const AppState *state)
 {
 	char line[32];
+	u8 zh_line[64];
 	u8 percent=state->light_valid?state->light:0;
 	UiService_ClearRect(24,264,296,332,UI_CARD);
+	if(UiService_ChineseEnabled())
+	{
+		if(state->light_valid)
+			sprintf((char *)zh_line,"%s             %u %%",
+			        (char *)GM_ZH_RELATIVE_LIGHT,
+			        (unsigned int)state->light);
+		else sprintf((char *)zh_line,"%s             --",
+		             (char *)GM_ZH_RELATIVE_LIGHT);
+		UiService_Utf8Text(24,266,zh_line,
+		                   state->light_valid?UI_TEXT:UI_ERROR,UI_CARD);
+	}
+	else
+	{
 	if(state->light_valid)
 		sprintf(line,"LIGHT                   %u %%",
 		        (unsigned int)state->light);
 	else sprintf(line,"LIGHT                   --");
 	UiService_Text(24,264,16,line,state->light_valid?UI_TEXT:UI_ERROR,UI_CARD);
+	}
 	UiService_ProgressBar(290,percent,UiService_LightColor(state));
-	UiService_Text(24,316,12,
-	               state->light_valid?AppState_LightLevel(state->light):
-	               "SENSOR ERROR",UiService_LightColor(state),UI_CARD);
+	UiService_LocalText(24,316,1,
+	                    !state->light_valid?GM_ZH_SENSOR_ERROR:
+	                    (state->light<=APP_LIGHT_DARK_MAX?GM_ZH_LOW:
+	                     (state->light<=APP_LIGHT_NORMAL_MAX?
+	                      GM_ZH_NORMAL_RANGE:GM_ZH_HIGH)),
+	                    state->light_valid?AppState_LightLevel(state->light):
+	                    "SENSOR ERROR",UiService_LightColor(state),UI_CARD);
 }
 
 static void UiService_DrawDetailOverall(const AppState *state)
@@ -585,14 +881,19 @@ static void UiService_DrawDetailOverall(const AppState *state)
 		text="OVERALL: GOOD";
 		color=UI_OK;
 	}
-	UiService_Pill(42,360,278,394,text,color,
-	               color==UI_WARN?UI_TEXT:WHITE);
+	UiService_LocalPill(42,360,278,394,
+	                    (!state->dht_valid || !state->light_valid)?
+	                    GM_ZH_OVERALL_SENSOR_ERROR:
+	                    (UiService_PlantMode(state)==UI_PLANT_ATTENTION?
+	                     GM_ZH_OVERALL_ATTENTION:GM_ZH_OVERALL_GOOD),
+	                    text,color,color==UI_WARN?UI_TEXT:WHITE);
 }
 
 static void UiService_RenderDetailFull(const AppState *state)
 {
 	UiService_Base("ENVIRONMENT DETAIL",APP_PAGE_DETAIL);
-	UiService_Text(24,76,12,"LIVE SENSOR LEVELS",UI_MUTED,UI_CARD);
+	UiService_LocalText(24,76,1,GM_ZH_LIVE_SENSOR_DATA,
+	                    "LIVE SENSOR LEVELS",UI_MUTED,UI_CARD);
 	UiService_DrawDetailTemperature(state);
 	UiService_DrawDetailHumidity(state);
 	UiService_DrawDetailLight(state);
@@ -650,16 +951,124 @@ static void UiService_DrawAiProgress(const AppState *state)
 static void UiService_DrawAiState(const AppState *state)
 {
 	char line[48];
+	u8 zh_line[64];
 	UiService_ClearRect(24,100,296,130,UI_CARD);
+	if(UiService_ChineseEnabled())
+	{
+		sprintf((char *)zh_line,"AI: %s",
+		        (char *)UiService_AiStateZh(state->ai_state));
+		UiService_Utf8TextScaledCentered(24,296,102,zh_line,2,
+		                                 UiService_AiColor(state),UI_CARD);
+		UiService_DrawAiProgress(state);
+		return;
+	}
 	sprintf(line,"AI: %s",AppState_AiStateText(state->ai_state));
 	UiService_TextCentered(24,296,102,24,line,UiService_AiColor(state),UI_CARD);
 	UiService_DrawAiProgress(state);
 }
 
+static u8 UiService_DrawAiDialog(const AppState *state)
+{
+#if APP_AI_DIALOG_ENABLE
+	const u8 *dialog;
+	u16 total_lines;
+	u16 max_scroll;
+	u16 scroll_line;
+	u16 track_height;
+	u16 thumb_height;
+	u16 thumb_offset;
+	if(!UiService_ChineseEnabled() || state->ai_state!=APP_AI_DONE ||
+	   !state->ai_dialog_ready ||
+	   AiTextService_GetState()!=AI_TEXT_READY ||
+	   AiTextService_GetRequestId()!=state->ai_request_id)
+		return 0;
+	dialog=AiTextService_GetText();
+	if(dialog[0]=='\0')return 0;
+
+	UiService_FillRoundRect(24,170,296,348,12,UI_HERO);
+	UiService_DrawPlantMiniIcon(34,178,state->species_id);
+	UiService_Utf8TextScaledCentered(78,166,180,
+	                                 UiService_PlantNameZh(state->species_id),
+	                                 2,UI_GREEN_DARK,UI_HERO);
+	UiService_LocalText(82,208,1,GM_ZH_AI_CARE_DIARY,
+	                    "AI CARE DIARY",UI_MUTED,UI_HERO);
+	LCD_Fill(34,224,286,225,UI_GREEN_LIGHT);
+	total_lines=FontService_CountUtf8WrappedLines(
+		UI_AI_DIALOG_TEXT_WIDTH,dialog);
+	max_scroll=(total_lines>UI_AI_DIALOG_VISIBLE_LINES)?
+	           (u16)(total_lines-UI_AI_DIALOG_VISIBLE_LINES):0;
+	scroll_line=state->ai_dialog_scroll_line;
+	if(scroll_line>max_scroll)scroll_line=max_scroll;
+	FontService_DrawUtf8WrappedFromLine(
+		UI_AI_DIALOG_TEXT_X,UI_AI_DIALOG_TEXT_Y,
+		UI_AI_DIALOG_TEXT_WIDTH,scroll_line,
+		UI_AI_DIALOG_VISIBLE_LINES,UI_AI_DIALOG_LINE_HEIGHT,
+		dialog,UI_TEXT,UI_HERO);
+	if(max_scroll>0)
+	{
+		track_height=(u16)(UI_AI_DIALOG_TRACK_Y2-UI_AI_DIALOG_TRACK_Y1+1);
+		thumb_height=(u16)((u32)track_height*
+		                  UI_AI_DIALOG_VISIBLE_LINES/total_lines);
+		if(thumb_height<18)thumb_height=18;
+		if(thumb_height>track_height)thumb_height=track_height;
+		thumb_offset=(u16)((u32)(track_height-thumb_height)*
+		                  scroll_line/max_scroll);
+		UiService_FillRoundRect(286,UI_AI_DIALOG_TRACK_Y1,291,
+		                       UI_AI_DIALOG_TRACK_Y2,3,UI_DISABLED);
+		UiService_FillRoundRect(286,
+		                       (u16)(UI_AI_DIALOG_TRACK_Y1+thumb_offset),
+		                       291,
+		                       (u16)(UI_AI_DIALOG_TRACK_Y1+thumb_offset+
+		                             thumb_height-1),
+		                       3,UI_GREEN_DARK);
+	}
+	return 1;
+#else
+	(void)state;
+	return 0;
+#endif
+}
+
 static void UiService_DrawAiDetails(const AppState *state)
 {
 	char line[48];
+	u8 zh_line[96];
+	const u8 *last_error;
 	UiService_ClearRect(24,170,296,348,UI_CARD);
+	if(UiService_DrawAiDialog(state))return;
+	if(UiService_ChineseEnabled())
+	{
+		sprintf((char *)zh_line,"%s #%u  %s/%s",
+		        (char *)GM_ZH_REQUEST,(unsigned int)state->ai_request_id,
+		        state->device_id,
+		        (char *)UiService_PlantNameZh(state->species_id));
+		UiService_Utf8Text(28,174,zh_line,UI_MUTED,UI_CARD);
+
+		sprintf((char *)zh_line,"%s: %s",(char *)GM_ZH_STATUS,
+		        (char *)UiService_StatusZh(state->ai_status));
+		UiService_Utf8Text(28,204,zh_line,UI_TEXT,UI_CARD);
+		sprintf((char *)zh_line,"%s: %s",(char *)GM_ZH_ISSUE,
+		        (char *)UiService_IssueZh(state->ai_issue));
+		UiService_Utf8Text(28,236,zh_line,UI_TEXT,UI_CARD);
+		sprintf((char *)zh_line,"%s: %s",(char *)GM_ZH_WATERING,
+		        (char *)UiService_WateringZh(state->ai_watering));
+		UiService_Utf8Text(28,268,zh_line,UI_TEXT,UI_CARD);
+		sprintf((char *)zh_line,"%s: %s",(char *)GM_ZH_ADVICE,
+		        (char *)UiService_AdviceZh(state->ai_advice));
+		UiService_Utf8Text(28,300,zh_line,UI_TEXT,UI_CARD);
+		if(state->ai_state==APP_AI_DONE && !state->ai_dialog_ready)
+			last_error=GM_ZH_DIALOG_FALLBACK;
+		else
+			last_error=(strcmp(state->last_error,"NONE")==0)?
+			           GM_ZH_NONE:(const u8 *)state->last_error;
+		sprintf((char *)zh_line,"%s: %s",(char *)GM_ZH_ERROR,
+		        (char *)last_error);
+		UiService_Utf8Text(28,332,zh_line,
+		                   (state->ai_state==APP_AI_ERROR ||
+		                    state->ai_state==APP_AI_TIMEOUT)?
+		                   UI_ERROR:UI_MUTED,UI_CARD);
+		return;
+	}
 	sprintf(line,"REQ #%u  %s/%s",(unsigned int)state->ai_request_id,
 	        state->device_id,state->plant_name);
 	UiService_Text(28,170,16,line,UI_MUTED,UI_CARD);
@@ -680,20 +1089,27 @@ static void UiService_DrawAiDetails(const AppState *state)
 static void UiService_DrawAiButtons(const AppState *state)
 {
 	u8 active=UiService_AiActive(state);
-	UiService_Button(18,362,151,416,active?"WORKING":"ANALYZE",
-	                 UI_HEADER,(u8)!active);
-	UiService_Button(169,362,302,416,"RETRY",UI_WARN,(u8)!active);
+	UiService_LocalButton(18,362,151,416,
+	                      active?GM_ZH_WORKING:GM_ZH_ANALYZE,
+	                      active?"WORKING":"ANALYZE",
+	                      UI_HEADER,(u8)!active);
+	UiService_LocalButton(169,362,302,416,GM_ZH_RETRY,
+	                      "RETRY",UI_WARN,(u8)!active);
 }
 
 static void UiService_RenderAiFull(const AppState *state)
 {
 	UiService_Base("AI PLANT ASSISTANT",APP_PAGE_AI);
-	UiService_Pill(24,74,170,96,
-	               state->gateway_ready?"GATEWAY READY":"GATEWAY OFFLINE",
-	               state->gateway_ready?UI_OK:UI_WARN,
-	               state->gateway_ready?WHITE:UI_TEXT);
-	UiService_Pill(180,74,296,96,state->plant_name,
-	               UI_GREEN_LIGHT,UI_GREEN_DARK);
+	UiService_LocalPill(24,74,170,96,
+	                    state->gateway_ready?GM_ZH_GATEWAY_READY:
+	                    GM_ZH_GATEWAY_OFFLINE,
+	                    state->gateway_ready?"GATEWAY READY":
+	                    "GATEWAY OFFLINE",
+	                    state->gateway_ready?UI_OK:UI_WARN,
+	                    state->gateway_ready?WHITE:UI_TEXT);
+	UiService_LocalPill(180,74,296,96,
+	                    UiService_PlantNameZh(state->species_id),
+	                    state->plant_name,UI_GREEN_LIGHT,UI_GREEN_DARK);
 	UiService_DrawAiState(state);
 	UiService_DrawAiDetails(state);
 	UiService_DrawAiButtons(state);
@@ -704,10 +1120,13 @@ static void UiService_RenderAiChanged(const AppState *state)
 	if(state->gateway_ready!=g_last_state.gateway_ready)
 	{
 		UiService_ClearRect(20,72,176,98,UI_CARD);
-		UiService_Pill(24,74,170,96,
-		               state->gateway_ready?"GATEWAY READY":"GATEWAY OFFLINE",
-		               state->gateway_ready?UI_OK:UI_WARN,
-		               state->gateway_ready?WHITE:UI_TEXT);
+		UiService_LocalPill(24,74,170,96,
+		                    state->gateway_ready?GM_ZH_GATEWAY_READY:
+		                    GM_ZH_GATEWAY_OFFLINE,
+		                    state->gateway_ready?"GATEWAY READY":
+		                    "GATEWAY OFFLINE",
+		                    state->gateway_ready?UI_OK:UI_WARN,
+		                    state->gateway_ready?WHITE:UI_TEXT);
 	}
 	if(state->ai_state!=g_last_state.ai_state)UiService_DrawAiState(state);
 	if(state->ai_request_id!=g_last_state.ai_request_id ||
@@ -716,6 +1135,9 @@ static void UiService_RenderAiChanged(const AppState *state)
 	   strcmp(state->ai_watering,g_last_state.ai_watering)!=0 ||
 	   strcmp(state->ai_advice,g_last_state.ai_advice)!=0 ||
 	   strcmp(state->last_error,g_last_state.last_error)!=0 ||
+	   state->ai_dialog_ready!=g_last_state.ai_dialog_ready ||
+	   state->ai_dialog_revision!=g_last_state.ai_dialog_revision ||
+	   state->ai_dialog_scroll_line!=g_last_state.ai_dialog_scroll_line ||
 	   state->ai_state!=g_last_state.ai_state)
 		UiService_DrawAiDetails(state);
 	if(state->ai_state!=g_last_state.ai_state)UiService_DrawAiButtons(state);
@@ -759,24 +1181,29 @@ static void UiService_DrawPlantLibraryCard(const AppState *state,u8 index)
 	if(!item->valid)
 	{
 		UiService_FillRoundRect(x1,y1,x2,y2,12,UI_DISABLED);
-		UiService_TextCentered(x1,x2,(u16)(y1+31),12,"EMPTY",
-		                       UI_MUTED,UI_DISABLED);
+		UiService_LocalTextCentered(x1,x2,(u16)(y1+31),1,
+		                            GM_ZH_EMPTY,"EMPTY",
+		                            UI_MUTED,UI_DISABLED);
 		return;
 	}
 
 	current=(strcmp(item->species_id,state->species_id)==0)?1:0;
 	UiService_Card(x1,y1,x2,y2);
 	UiService_DrawPlantMiniIcon((u16)(x1+9),(u16)(y1+12),item->species_id);
-	UiService_Text((u16)(x1+45),(u16)(y1+12),16,item->display_name,
-	               UI_TEXT,UI_CARD);
-	UiService_Text((u16)(x1+45),(u16)(y1+35),12,item->source_type,
-	               UI_MUTED,UI_CARD);
+	UiService_LocalText((u16)(x1+45),(u16)(y1+12),1,
+	                    UiService_PlantNameZh(item->species_id),
+	                    item->display_name,UI_TEXT,UI_CARD);
+	UiService_LocalText((u16)(x1+45),(u16)(y1+35),1,
+	                    UiService_SourceZh(item->source_type),
+	                    item->source_type,UI_MUTED,UI_CARD);
 	if(current)
-		UiService_Pill((u16)(x1+43),(u16)(y1+53),(u16)(x2-7),
-		               (u16)(y1+72),"CURRENT",UI_OK,WHITE);
+		UiService_LocalPill((u16)(x1+43),(u16)(y1+53),(u16)(x2-7),
+		                    (u16)(y1+72),GM_ZH_CURRENT,
+		                    "CURRENT",UI_OK,WHITE);
 	else
-		UiService_Text((u16)(x1+45),(u16)(y1+57),12,"VIEW PROFILE",
-		               UI_GREEN_DARK,UI_CARD);
+		UiService_LocalText((u16)(x1+45),(u16)(y1+57),1,
+		                    GM_ZH_VIEW_PROFILE,"VIEW PROFILE",
+		                    UI_GREEN_DARK,UI_CARD);
 }
 
 static void UiService_DrawPlantLibraryContent(const AppState *state)
@@ -784,26 +1211,27 @@ static void UiService_DrawPlantLibraryContent(const AppState *state)
 	u8 i;
 	if(state->plant_list_state==APP_PLANT_DATA_LOADING)
 	{
-		UiService_TextCentered(20,300,180,24,"LOADING PLANTS...",
-		                       UI_WARN,UI_CARD);
-		UiService_TextCentered(20,300,216,12,"WAITING FOR GATEWAY",
-		                       UI_MUTED,UI_CARD);
+		UiService_LocalTextCentered(20,300,180,2,GM_ZH_LOADING_PLANTS,
+		                            "LOADING PLANTS...",UI_WARN,UI_CARD);
+		UiService_LocalTextCentered(20,300,216,1,GM_ZH_WAIT_GATEWAY,
+		                            "WAITING FOR GATEWAY",UI_MUTED,UI_CARD);
 		return;
 	}
 	if(state->plant_list_state==APP_PLANT_DATA_ERROR)
 	{
-		UiService_TextCentered(20,300,170,24,"PLANT LIST ERROR",
-		                       UI_ERROR,UI_CARD);
+		UiService_LocalTextCentered(20,300,170,2,GM_ZH_PLANT_LIST_ERROR,
+		                            "PLANT LIST ERROR",UI_ERROR,UI_CARD);
 		UiService_TextCentered(20,300,210,16,state->plant_error,
 		                       UI_ERROR,UI_CARD);
-		UiService_TextCentered(20,300,244,12,"CHECK GATEWAY AND RETRY",
-		                       UI_MUTED,UI_CARD);
+		UiService_LocalTextCentered(20,300,244,1,GM_ZH_CHECK_GATEWAY_RETRY,
+		                            "CHECK GATEWAY AND RETRY",
+		                            UI_MUTED,UI_CARD);
 		return;
 	}
 	if(state->plant_list_state!=APP_PLANT_DATA_READY)
 	{
-		UiService_TextCentered(20,300,190,24,"NO PLANT DATA",
-		                       UI_MUTED,UI_CARD);
+		UiService_LocalTextCentered(20,300,190,2,GM_ZH_NO_PLANT_DATA,
+		                            "NO PLANT DATA",UI_MUTED,UI_CARD);
 		return;
 	}
 
@@ -814,20 +1242,34 @@ static void UiService_DrawPlantLibraryContent(const AppState *state)
 static void UiService_RenderPlantLibraryFull(const AppState *state)
 {
 	char line[40];
+	u8 zh_line[64];
 	UiService_Base("PLANT LIBRARY",APP_PAGE_PLANT_LIBRARY);
 	if(state->plant_list_state==APP_PLANT_DATA_READY)
 	{
+		if(UiService_ChineseEnabled())
+		{
+			sprintf((char *)zh_line,"%u %s / SQLite",
+			        (unsigned int)state->plant_list_count,
+			        (char *)GM_ZH_PLANT_COUNT);
+			UiService_Utf8TextCentered(20,300,70,zh_line,
+			                           UI_MUTED,UI_CARD);
+		}
+		else
+		{
 		sprintf(line,"%u PLANTS FROM SQLITE",
 		        (unsigned int)state->plant_list_count);
 		UiService_TextCentered(20,300,70,12,line,UI_MUTED,UI_CARD);
+		}
 	}
 	else
-		UiService_TextCentered(20,300,70,12,"DATABASE-DRIVEN PROFILES",
-		                       UI_MUTED,UI_CARD);
+		UiService_LocalTextCentered(20,300,70,1,GM_ZH_DATABASE_PROFILES,
+		                            "DATABASE-DRIVEN PROFILES",
+		                            UI_MUTED,UI_CARD);
 	UiService_DrawPlantLibraryContent(state);
-	UiService_Button(18,362,151,416,"BACK",UI_GREEN_DARK,1);
-	UiService_Button(169,362,302,416,"REFRESH",UI_HEADER,
-	                 state->gateway_ready);
+	UiService_LocalButton(18,362,151,416,GM_ZH_BACK,
+	                      "BACK",UI_GREEN_DARK,1);
+	UiService_LocalButton(169,362,302,416,GM_ZH_REFRESH,
+	                      "REFRESH",UI_HEADER,state->gateway_ready);
 }
 
 static void UiService_RenderPlantLibraryChanged(const AppState *state)
@@ -840,20 +1282,24 @@ static void UiService_RenderPlantLibraryChanged(const AppState *state)
 static void UiService_DrawPlantProfileContent(const AppState *state)
 {
 	char line[48];
+	u8 zh_line[96];
 	u8 is_current;
 
 	if(state->plant_detail_state==APP_PLANT_DATA_LOADING)
 	{
-		UiService_TextCentered(20,300,180,24,"LOADING PROFILE...",
-		                       UI_WARN,UI_CARD);
-		UiService_TextCentered(20,300,220,16,state->plant_detail_name,
-		                       UI_TEXT,UI_CARD);
+		UiService_LocalTextCentered(20,300,180,2,GM_ZH_LOADING_PROFILE,
+		                            "LOADING PROFILE...",UI_WARN,UI_CARD);
+		UiService_LocalTextCentered(20,300,220,1,
+		                            UiService_PlantNameZh(
+		                             state->plant_detail_species_id),
+		                            state->plant_detail_name,
+		                            UI_TEXT,UI_CARD);
 		return;
 	}
 	if(state->plant_detail_state==APP_PLANT_DATA_ERROR)
 	{
-		UiService_TextCentered(20,300,170,24,"PROFILE ERROR",
-		                       UI_ERROR,UI_CARD);
+		UiService_LocalTextCentered(20,300,170,2,GM_ZH_PROFILE_ERROR,
+		                            "PROFILE ERROR",UI_ERROR,UI_CARD);
 		UiService_TextCentered(20,300,210,16,state->plant_error,
 		                       UI_ERROR,UI_CARD);
 		return;
@@ -861,37 +1307,86 @@ static void UiService_DrawPlantProfileContent(const AppState *state)
 	if(state->plant_detail_state!=APP_PLANT_DATA_READY)return;
 
 	is_current=(strcmp(state->species_id,state->plant_detail_species_id)==0)?1:0;
-	UiService_TextCentered(20,300,78,24,state->plant_detail_name,
-	                       UI_GREEN_DARK,UI_CARD);
-	UiService_Pill(112,108,208,132,state->plant_detail_source,
-	               UI_GREEN_LIGHT,UI_GREEN_DARK);
+	UiService_LocalTextCentered(20,300,78,2,
+	                            UiService_PlantNameZh(
+	                             state->plant_detail_species_id),
+	                            state->plant_detail_name,
+	                            UI_GREEN_DARK,UI_CARD);
+	UiService_LocalPill(112,108,208,132,
+	                    UiService_SourceZh(state->plant_detail_source),
+	                    state->plant_detail_source,
+	                    UI_GREEN_LIGHT,UI_GREEN_DARK);
+	if(UiService_ChineseEnabled())
+	{
+		sprintf((char *)zh_line,"%s: %s",(char *)GM_ZH_SPECIES_ID,
+		        state->plant_detail_species_id);
+		UiService_Utf8TextCentered(20,300,142,zh_line,UI_MUTED,UI_CARD);
+	}
+	else
+	{
 	sprintf(line,"SPECIES ID: %s",state->plant_detail_species_id);
 	UiService_TextCentered(20,300,142,12,line,UI_MUTED,UI_CARD);
+	}
 
 	UiService_FillRoundRect(28,172,292,214,10,UI_HERO);
+	if(UiService_ChineseEnabled())
+	{
+		sprintf((char *)zh_line,"%s       %u - %u C",
+		        (char *)GM_ZH_TEMPERATURE_RANGE,
+		        (unsigned int)state->plant_temp_min,
+		        (unsigned int)state->plant_temp_max);
+		UiService_Utf8Text(40,187,zh_line,UI_TEXT,UI_HERO);
+	}
+	else
+	{
 	sprintf(line,"TEMPERATURE       %u - %u C",
 	        (unsigned int)state->plant_temp_min,
 	        (unsigned int)state->plant_temp_max);
 	UiService_Text(40,185,16,line,UI_TEXT,UI_HERO);
+	}
 
 	UiService_FillRoundRect(28,224,292,266,10,UI_HERO);
+	if(UiService_ChineseEnabled())
+	{
+		sprintf((char *)zh_line,"%s       %u - %u %%",
+		        (char *)GM_ZH_HUMIDITY_RANGE,
+		        (unsigned int)state->plant_humidity_min,
+		        (unsigned int)state->plant_humidity_max);
+		UiService_Utf8Text(40,239,zh_line,UI_TEXT,UI_HERO);
+	}
+	else
+	{
 	sprintf(line,"HUMIDITY          %u - %u %%",
 	        (unsigned int)state->plant_humidity_min,
 	        (unsigned int)state->plant_humidity_max);
 	UiService_Text(40,237,16,line,UI_TEXT,UI_HERO);
+	}
 
 	UiService_FillRoundRect(28,276,292,318,10,UI_HERO);
+	if(UiService_ChineseEnabled())
+	{
+		sprintf((char *)zh_line,"%s       %u - %u %%",
+		        (char *)GM_ZH_LIGHT_RANGE,
+		        (unsigned int)state->plant_light_min,
+		        (unsigned int)state->plant_light_max);
+		UiService_Utf8Text(40,291,zh_line,UI_TEXT,UI_HERO);
+	}
+	else
+	{
 	sprintf(line,"LIGHT             %u - %u %%",
 	        (unsigned int)state->plant_light_min,
 	        (unsigned int)state->plant_light_max);
 	UiService_Text(40,289,16,line,UI_TEXT,UI_HERO);
+	}
 
-	UiService_Pill(76,330,244,352,
-	               state->plant_selection_pending?"SAVING TO DEVICE":
-	               (is_current?"CURRENT PLANT":"READY TO USE"),
-	               state->plant_selection_pending?UI_WARN:
-	               (is_current?UI_OK:UI_HEADER),
-	               state->plant_selection_pending?UI_TEXT:WHITE);
+	UiService_LocalPill(76,330,244,352,
+	                    state->plant_selection_pending?GM_ZH_SAVING_TO_DEVICE:
+	                    (is_current?GM_ZH_CURRENT_PLANT:GM_ZH_READY_TO_USE),
+	                    state->plant_selection_pending?"SAVING TO DEVICE":
+	                    (is_current?"CURRENT PLANT":"READY TO USE"),
+	                    state->plant_selection_pending?UI_WARN:
+	                    (is_current?UI_OK:UI_HEADER),
+	                    state->plant_selection_pending?UI_TEXT:WHITE);
 }
 
 static void UiService_RenderPlantProfileFull(const AppState *state)
@@ -899,10 +1394,12 @@ static void UiService_RenderPlantProfileFull(const AppState *state)
 	u8 is_current;
 	u8 use_enabled;
 	const char *use_label;
+	const u8 *use_label_zh;
 
 	UiService_Base("PLANT PROFILE",APP_PAGE_PLANT_PROFILE);
 	UiService_DrawPlantProfileContent(state);
-	UiService_Button(18,362,151,416,"BACK",UI_GREEN_DARK,1);
+	UiService_LocalButton(18,362,151,416,GM_ZH_BACK,
+	                      "BACK",UI_GREEN_DARK,1);
 
 	is_current=(strcmp(state->species_id,state->plant_detail_species_id)==0)?1:0;
 	use_enabled=(state->plant_detail_state==APP_PLANT_DATA_READY &&
@@ -911,7 +1408,11 @@ static void UiService_RenderPlantProfileFull(const AppState *state)
 	if(state->plant_selection_pending)use_label="SAVING";
 	else if(is_current)use_label="CURRENT";
 	else use_label="USE PLANT";
-	UiService_Button(169,362,302,416,use_label,UI_HEADER,use_enabled);
+	if(state->plant_selection_pending)use_label_zh=GM_ZH_SAVING;
+	else if(is_current)use_label_zh=GM_ZH_CURRENT;
+	else use_label_zh=GM_ZH_USE_PLANT;
+	UiService_LocalButton(169,362,302,416,use_label_zh,use_label,
+	                      UI_HEADER,use_enabled);
 }
 
 static void UiService_RenderPlantProfileChanged(const AppState *state)
@@ -924,7 +1425,40 @@ static void UiService_RenderPlantProfileChanged(const AppState *state)
 static void UiService_DrawSystemFields(const AppState *state)
 {
 	char line[48];
+	u8 zh_line[96];
+	const u8 *wifi_status_zh;
 	UiService_ClearRect(24,96,296,246,UI_CARD);
+	if(UiService_ChineseEnabled())
+	{
+		wifi_status_zh=UiService_WifiStatusZh(state->wifi_status);
+		if(wifi_status_zh==GM_ZH_UNKNOWN)
+			wifi_status_zh=(const u8 *)state->wifi_status;
+		sprintf((char *)zh_line,"WiFi: %s",
+		        (char *)wifi_status_zh);
+		UiService_Utf8Text(28,100,zh_line,
+		                   state->wifi_connected?UI_OK:UI_WARN,UI_CARD);
+		sprintf((char *)zh_line,"%s: %s",(char *)GM_ZH_HOTSPOT,
+		        APP_WIFI_SSID);
+		UiService_Utf8Text(28,126,zh_line,UI_TEXT,UI_CARD);
+		sprintf((char *)zh_line,"%s: %s / %s",(char *)GM_ZH_DEVICE,
+		        state->device_id,
+		        (char *)UiService_PlantNameZh(state->species_id));
+		UiService_Utf8Text(28,152,zh_line,UI_TEXT,UI_CARD);
+		sprintf((char *)zh_line,"%s: %s",(char *)GM_ZH_LOCAL_IP,
+		        state->sta_ip);
+		UiService_Utf8Text(28,178,zh_line,UI_TEXT,UI_CARD);
+		sprintf((char *)zh_line,"TCP: %s",
+		        (char *)(state->tcp_connected?
+		                 GM_ZH_CONNECTED:GM_ZH_WAITING));
+		UiService_Utf8Text(28,204,zh_line,
+		                   state->tcp_connected?UI_OK:UI_WARN,UI_CARD);
+		sprintf((char *)zh_line,"%s: %s",(char *)GM_ZH_GATEWAY,
+		        (char *)(state->gateway_ready?
+		                 GM_ZH_READY:GM_ZH_OFFLINE));
+		UiService_Utf8Text(28,230,zh_line,
+		                   state->gateway_ready?UI_OK:UI_WARN,UI_CARD);
+		return;
+	}
 	sprintf(line,"WIFI: %s",state->wifi_status);
 	UiService_Text(28,98,16,line,state->wifi_connected?UI_OK:UI_WARN,UI_CARD);
 	sprintf(line,"SSID: %s",APP_WIFI_SSID);
@@ -942,10 +1476,23 @@ static void UiService_DrawSystemFields(const AppState *state)
 static void UiService_DrawSystemSafety(const AppState *state)
 {
 	char line[48];
+	u8 zh_line[96];
 	UiService_ClearRect(24,250,296,342,UI_CARD);
 	UiService_Card(24,250,296,342);
-	UiService_Text(34,262,16,"PUMP: NOT CONNECTED",UI_ERROR,UI_CARD);
-	UiService_Text(34,288,12,"OUTPUT COMMANDS DISABLED",UI_WARN,UI_CARD);
+	UiService_LocalText(34,264,1,GM_ZH_PUMP_NOT_CONNECTED,
+	                    "PUMP: NOT CONNECTED",UI_ERROR,UI_CARD);
+	UiService_LocalText(34,290,1,GM_ZH_OUTPUT_DISABLED,
+	                    "OUTPUT COMMANDS DISABLED",UI_WARN,UI_CARD);
+	if(UiService_ChineseEnabled())
+	{
+		sprintf((char *)zh_line,"%s: %s",(char *)GM_ZH_LAST_ERROR,
+		        (char *)(strcmp(state->last_error,"NONE")==0?
+		                 GM_ZH_NONE:(const u8 *)state->last_error));
+		UiService_Utf8Text(34,318,zh_line,
+		                   strcmp(state->last_error,"NONE")==0?
+		                   UI_MUTED:UI_ERROR,UI_CARD);
+		return;
+	}
 	sprintf(line,"LAST ERROR: %s",state->last_error);
 	UiService_Text(34,316,12,line,
 	               strcmp(state->last_error,"NONE")==0?UI_MUTED:UI_ERROR,UI_CARD);
@@ -953,16 +1500,20 @@ static void UiService_DrawSystemSafety(const AppState *state)
 
 static void UiService_DrawSystemButtons(const AppState *state)
 {
-	UiService_Button(18,362,151,416,
-	                 state->wifi_connected?"CHECK":"RETRY WIFI",
-	                 UI_HEADER,1);
-	UiService_Button(169,362,302,416,"CALIBRATE",UI_GREEN_DARK,1);
+	UiService_LocalButton(18,362,151,416,
+	                      state->wifi_connected?GM_ZH_CHECK_NETWORK:
+	                      GM_ZH_RETRY_NETWORK,
+	                      state->wifi_connected?"CHECK":"RETRY WIFI",
+	                      UI_HEADER,1);
+	UiService_LocalButton(169,362,302,416,GM_ZH_CALIBRATE,
+	                      "CALIBRATE",UI_GREEN_DARK,1);
 }
 
 static void UiService_RenderSystemFull(const AppState *state)
 {
 	UiService_Base("SYSTEM & SAFETY",APP_PAGE_SYSTEM);
-	UiService_Text(24,76,12,"CONNECTION AND OUTPUT STATUS",UI_MUTED,UI_CARD);
+	UiService_LocalText(24,76,1,GM_ZH_SYSTEM_STATUS,
+	                    "CONNECTION AND OUTPUT STATUS",UI_MUTED,UI_CARD);
 	UiService_DrawSystemFields(state);
 	UiService_DrawSystemSafety(state);
 	UiService_DrawSystemButtons(state);
@@ -986,12 +1537,32 @@ void UiService_Init(void)
 {
 	TFTLCD_Init();
 	LCD_LED=1;
+	g_chinese_font_ready=FontService_IsReady();
+	printf("[FONT] asset=%s ui=%s\r\n",
+	       g_chinese_font_ready?"READY":"INVALID",
+	       UiService_ChineseEnabled()?"CHINESE":"ENGLISH");
 	g_render_cache_valid=0;
 }
 
 void UiService_Invalidate(void)
 {
 	g_render_cache_valid=0;
+}
+
+u16 UiService_AiDialogMaxScroll(void)
+{
+	u16 total_lines;
+#if APP_AI_DIALOG_ENABLE
+	if(AiTextService_GetState()!=AI_TEXT_READY ||
+	   AiTextService_GetText()[0]=='\0')return 0;
+	total_lines=FontService_CountUtf8WrappedLines(
+		UI_AI_DIALOG_TEXT_WIDTH,AiTextService_GetText());
+	if(total_lines>UI_AI_DIALOG_VISIBLE_LINES)
+		return (u16)(total_lines-UI_AI_DIALOG_VISIBLE_LINES);
+#else
+	(void)total_lines;
+#endif
+	return 0;
 }
 
 void UiService_Render(const AppState *state)

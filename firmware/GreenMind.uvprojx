@@ -528,6 +528,21 @@
               <FilePath>.\APP\agriculture\asset_service.c</FilePath>
             </File>
             <File>
+              <FileName>ai_text_service.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\APP\agriculture\ai_text_service.c</FilePath>
+            </File>
+            <File>
+              <FileName>font_service.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\APP\agriculture\font_service.c</FilePath>
+            </File>
+            <File>
+              <FileName>font_assets.s</FileName>
+              <FileType>2</FileType>
+              <FilePath>.\APP\agriculture\font_assets.s</FilePath>
+            </File>
+            <File>
               <FileName>protocol.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\APP\agriculture\protocol.c</FilePath>

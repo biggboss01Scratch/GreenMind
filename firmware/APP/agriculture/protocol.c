@@ -186,6 +186,30 @@ static void Protocol_ParseFrame(char *frame)
 		Protocol_Copy(event.watering,sizeof(event.watering),fields[5]);
 		Protocol_Copy(event.advice,sizeof(event.advice),fields[6]);
 	}
+	else if(strcmp(fields[1],"AI_TEXT_BEGIN")==0 && count==6 &&
+	        Protocol_ParseU16(fields[2],&event.request_id) &&
+	        Protocol_ParseU16(fields[3],&event.byte_size) &&
+	        Protocol_ParseU16(fields[4],&event.chunk_count) &&
+	        Protocol_ParseHexU32(fields[5],&event.crc32))
+		event.type=PROTOCOL_EVENT_AI_TEXT_BEGIN;
+	else if(strcmp(fields[1],"AI_TEXT_CHUNK")==0 && count==5 &&
+	        Protocol_ParseU16(fields[2],&event.request_id) &&
+	        Protocol_ParseU16(fields[3],&event.sequence))
+	{
+		event.type=PROTOCOL_EVENT_AI_TEXT_CHUNK;
+		Protocol_Copy(event.asset_hex,sizeof(event.asset_hex),fields[4]);
+	}
+	else if(strcmp(fields[1],"AI_TEXT_END")==0 && count==5 &&
+	        Protocol_ParseU16(fields[2],&event.request_id) &&
+	        Protocol_ParseU16(fields[3],&event.chunk_count) &&
+	        Protocol_ParseHexU32(fields[4],&event.crc32))
+		event.type=PROTOCOL_EVENT_AI_TEXT_END;
+	else if(strcmp(fields[1],"AI_TEXT_ERROR")==0 && count==4 &&
+	        Protocol_ParseU16(fields[2],&event.request_id))
+	{
+		event.type=PROTOCOL_EVENT_AI_TEXT_ERROR;
+		Protocol_Copy(event.error,sizeof(event.error),fields[3]);
+	}
 	else if(strcmp(fields[1],"PLANT_LIST_BEGIN")==0 && count==5 &&
 	        Protocol_ParseU8(fields[2],&event.item_count))
 	{

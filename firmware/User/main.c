@@ -5,6 +5,7 @@
 #include "app_state.h"
 #include "protocol.h"
 #include "asset_service.h"
+#include "ai_text_service.h"
 #include "sensor_service.h"
 #include "key_service.h"
 #include "touch_service.h"
@@ -16,6 +17,7 @@
 #define STA_SCAN_TIMEOUT_TICKS   1500
 #define STA_JOIN_TIMEOUT_TICKS   3000
 #define STA_QUERY_TIMEOUT_TICKS  500
+#define AI_DIALOG_SCROLL_STEP    2
 
 typedef enum
 {
@@ -400,12 +402,28 @@ static void App_ClearPlantItems(AppState *app)
 
 static void App_ResetAiForPlant(AppState *app)
 {
+	AiTextService_Cancel("PLANT CHANGED");
 	app->ai_state=APP_AI_IDLE;
 	app->ai_wait_ticks=0;
 	AppState_CopyText(app->ai_status,sizeof(app->ai_status),"IDLE");
 	AppState_CopyText(app->ai_issue,sizeof(app->ai_issue),"-");
 	AppState_CopyText(app->ai_watering,sizeof(app->ai_watering),"-");
 	AppState_CopyText(app->ai_advice,sizeof(app->ai_advice),"-");
+	app->ai_dialog_ready=0;
+	app->ai_dialog_revision++;
+	app->ai_dialog_scroll_line=0;
+	AppState_CopyText(app->ai_dialog_error,
+	                  sizeof(app->ai_dialog_error),"NONE");
+}
+
+static void App_HandleAiTextFailure(AppState *app,const char *error)
+{
+	app->ai_dialog_ready=0;
+	app->ai_dialog_scroll_line=0;
+	AppState_CopyText(app->ai_dialog_error,sizeof(app->ai_dialog_error),error);
+	app->ai_dialog_revision++;
+	app->ui_dirty=1;
+	printf("[AI TEXT] FALLBACK %s\r\n",error);
 }
 
 static u8 App_QueuePlantListRequest(const AppState *app)
@@ -448,21 +466,6 @@ static u8 App_StartAssetRequest(AppState *app,const char *state,u8 reset_retry)
 	if(strcmp(app->species_id,"pothos")==0)
 	{
 		App_SetBuiltInAsset(app,state);
-		return 1;
-	}
-	if(strcmp(app->species_id,"cactus")!=0)
-	{
-		AssetService_Cancel("CACTUS TEST ONLY");
-		AppState_CopyText(app->asset_status,sizeof(app->asset_status),
-		                  "PLACEHOLDER");
-		AppState_CopyText(app->asset_species_id,
-		                  sizeof(app->asset_species_id),app->species_id);
-		AppState_CopyText(app->asset_state,sizeof(app->asset_state),state);
-		AppState_CopyText(app->asset_error,sizeof(app->asset_error),
-		                  "CACTUS TEST ONLY");
-		app->asset_retry_count=0;
-		app->asset_revision++;
-		app->ui_dirty=1;
 		return 1;
 	}
 	if(!app->gateway_ready)
@@ -573,6 +576,53 @@ static void App_HandleProtocolEvent(AppState *app,const ProtocolEvent *event)
 		else if(strcmp(event->status,"VALIDATING")==0)App_SetAiState(app,APP_AI_VALIDATING);
 		app->ai_wait_ticks=APP_AI_TIMEOUT_TICKS;
 	}
+	else if(event->type==PROTOCOL_EVENT_AI_TEXT_BEGIN &&
+	        event->request_id==app->ai_request_id && App_AiActive(app))
+	{
+		if(!AiTextService_Begin(event->request_id,event->byte_size,
+		                       event->chunk_count,event->crc32))
+			App_HandleAiTextFailure(app,AiTextService_GetError());
+		else
+		{
+			app->ai_wait_ticks=APP_AI_TIMEOUT_TICKS;
+			printf("[AI TEXT] BEGIN request=%u bytes=%u chunks=%u\r\n",
+			       (unsigned int)event->request_id,
+			       (unsigned int)event->byte_size,
+			       (unsigned int)event->chunk_count);
+		}
+	}
+	else if(event->type==PROTOCOL_EVENT_AI_TEXT_CHUNK &&
+	        event->request_id==app->ai_request_id && App_AiActive(app))
+	{
+		if(!AiTextService_AppendChunk(event->request_id,event->sequence,
+		                             event->asset_hex))
+			App_HandleAiTextFailure(app,AiTextService_GetError());
+		else app->ai_wait_ticks=APP_AI_TIMEOUT_TICKS;
+	}
+	else if(event->type==PROTOCOL_EVENT_AI_TEXT_END &&
+	        event->request_id==app->ai_request_id && App_AiActive(app))
+	{
+		if(AiTextService_End(event->request_id,event->chunk_count,event->crc32))
+		{
+			app->ai_dialog_ready=1;
+			app->ai_dialog_scroll_line=0;
+			AppState_CopyText(app->ai_dialog_error,
+			                  sizeof(app->ai_dialog_error),"NONE");
+			app->ai_dialog_revision++;
+			app->ui_dirty=1;
+			app->ai_wait_ticks=APP_AI_TIMEOUT_TICKS;
+			printf("[AI TEXT] READY request=%u bytes=%u\r\n",
+			       (unsigned int)event->request_id,
+			       (unsigned int)AiTextService_GetLength());
+		}
+		else App_HandleAiTextFailure(app,AiTextService_GetError());
+	}
+	else if(event->type==PROTOCOL_EVENT_AI_TEXT_ERROR &&
+	        event->request_id==app->ai_request_id && App_AiActive(app))
+	{
+		AiTextService_Fail(event->request_id,event->error);
+		App_HandleAiTextFailure(app,event->error);
+	}
 	else if(event->type==PROTOCOL_EVENT_AI_RESULT &&
 	        event->request_id==app->ai_request_id && App_AiActive(app))
 	{
@@ -580,6 +630,12 @@ static void App_HandleProtocolEvent(AppState *app,const ProtocolEvent *event)
 		AppState_CopyText(app->ai_issue,sizeof(app->ai_issue),event->issue);
 		AppState_CopyText(app->ai_watering,sizeof(app->ai_watering),event->watering);
 		AppState_CopyText(app->ai_advice,sizeof(app->ai_advice),event->advice);
+		if(AiTextService_GetState()!=AI_TEXT_READY)
+		{
+			AiTextService_Cancel("TEXT INCOMPLETE");
+			if(strcmp(app->ai_dialog_error,"NONE")==0)
+				App_HandleAiTextFailure(app,"TEXT INCOMPLETE");
+		}
 		AppState_CopyText(app->last_error,sizeof(app->last_error),"NONE");
 		app->ai_wait_ticks=0;
 		app->page=APP_PAGE_AI;
@@ -770,6 +826,8 @@ static void App_HandleProtocolEvent(AppState *app,const ProtocolEvent *event)
 	else if(event->type==PROTOCOL_EVENT_ERROR &&
 	        (event->request_id==0 || event->request_id==app->ai_request_id))
 	{
+		AiTextService_Cancel(event->error);
+		App_HandleAiTextFailure(app,event->error);
 		AppState_CopyText(app->last_error,sizeof(app->last_error),event->error);
 		app->ai_wait_ticks=0;
 		app->page=APP_PAGE_AI;
@@ -839,6 +897,8 @@ static void AppTcp_Task(AppState *app)
 		}
 		if(App_AiActive(app))
 		{
+			AiTextService_Cancel("GATEWAY LOST");
+			App_HandleAiTextFailure(app,"GATEWAY LOST");
 			AppState_CopyText(app->last_error,sizeof(app->last_error),"GATEWAY LOST");
 			App_SetAiState(app,APP_AI_ERROR);
 		}
@@ -849,7 +909,7 @@ static void AppTcp_Task(AppState *app)
 	if(g_hello_pending && AppTx_EnqueueText("V1|HELLO|STM32|READY\r\n"))
 		g_hello_pending=0;
 
-	while(reads<4)
+	while(reads<8)
 	{
 		length=WiFi_TCP_Read(chunk,sizeof(chunk));
 		if(length==0)break;
@@ -864,6 +924,8 @@ static void AppTcp_Task(AppState *app)
 		AppState_CopyText(app->last_error,sizeof(app->last_error),"EVENT OVERFLOW");
 		if(App_AiActive(app))
 		{
+			AiTextService_Cancel("EVENT OVERFLOW");
+			App_HandleAiTextFailure(app,"EVENT OVERFLOW");
 			app->ai_wait_ticks=0;
 			App_SetAiState(app,APP_AI_ERROR);
 		}
@@ -929,10 +991,16 @@ static void App_RequestAi(AppState *app)
 		return;
 	}
 
+	AiTextService_StartRequest(app->ai_request_id);
 	AppState_CopyText(app->ai_status,sizeof(app->ai_status),"PENDING");
 	AppState_CopyText(app->ai_issue,sizeof(app->ai_issue),"-");
 	AppState_CopyText(app->ai_watering,sizeof(app->ai_watering),"-");
 	AppState_CopyText(app->ai_advice,sizeof(app->ai_advice),"-");
+	app->ai_dialog_ready=0;
+	app->ai_dialog_revision++;
+	app->ai_dialog_scroll_line=0;
+	AppState_CopyText(app->ai_dialog_error,
+	                  sizeof(app->ai_dialog_error),"NONE");
 	AppState_CopyText(app->last_error,sizeof(app->last_error),"NONE");
 	app->ai_wait_ticks=APP_AI_TIMEOUT_TICKS;
 	App_SetAiState(app,APP_AI_SENDING);
@@ -948,6 +1016,8 @@ static void App_AiTimeoutTask(AppState *app)
 	if(app->ai_wait_ticks>0)app->ai_wait_ticks--;
 	if(app->ai_wait_ticks==0)
 	{
+		AiTextService_Cancel("MODEL TIMEOUT");
+		App_HandleAiTextFailure(app,"MODEL TIMEOUT");
 		AppState_CopyText(app->last_error,sizeof(app->last_error),"MODEL TIMEOUT");
 		App_SetAiState(app,APP_AI_TIMEOUT);
 	}
@@ -1065,12 +1135,14 @@ int main(void)
 	u8 wifi_ready;
 	u16 ui_timer=0;
 	u16 log_timer=200;
+	u16 dialog_scroll_max=0;
 
 	SysTick_Init(72);
 	NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
 	USART1_Init(115200);
 	AppState_Init(&app);
 	AssetService_Init();
+	AiTextService_Init();
 	WiFi_ModuleEnable_Init();
 	UiService_Init();
 	TouchService_Init();
@@ -1096,6 +1168,8 @@ int main(void)
 		SensorService_Task(&app);
 		if(AssetService_Task())
 			App_HandleAssetFailure(&app,AssetService_GetError());
+		if(AiTextService_Task())
+			App_HandleAiTextFailure(&app,AiTextService_GetError());
 
 		key_event=KeyService_Task();
 		if(key_event==APP_KEY_EVENT_PAGE)
@@ -1141,6 +1215,39 @@ int main(void)
 		{
 			printf("[TOUCH] AI REQUEST\r\n");
 			App_RequestAi(&app);
+		}
+		else if(touch_event==APP_TOUCH_EVENT_AI_DIALOG_SCROLL_DOWN &&
+		        app.ai_dialog_ready)
+		{
+			dialog_scroll_max=UiService_AiDialogMaxScroll();
+			if(app.ai_dialog_scroll_line<dialog_scroll_max)
+			{
+				if((u16)(app.ai_dialog_scroll_line+
+				   AI_DIALOG_SCROLL_STEP)>dialog_scroll_max)
+					app.ai_dialog_scroll_line=dialog_scroll_max;
+				else
+					app.ai_dialog_scroll_line=(u16)(
+						app.ai_dialog_scroll_line+AI_DIALOG_SCROLL_STEP);
+				app.ui_dirty=1;
+				printf("[TOUCH] AI DIALOG DOWN line=%u/%u\r\n",
+				       (unsigned int)app.ai_dialog_scroll_line,
+				       (unsigned int)dialog_scroll_max);
+			}
+		}
+		else if(touch_event==APP_TOUCH_EVENT_AI_DIALOG_SCROLL_UP &&
+		        app.ai_dialog_ready)
+		{
+			if(app.ai_dialog_scroll_line>0)
+			{
+				if(app.ai_dialog_scroll_line<AI_DIALOG_SCROLL_STEP)
+					app.ai_dialog_scroll_line=0;
+				else
+					app.ai_dialog_scroll_line=(u16)(
+						app.ai_dialog_scroll_line-AI_DIALOG_SCROLL_STEP);
+				app.ui_dirty=1;
+				printf("[TOUCH] AI DIALOG UP line=%u\r\n",
+				       (unsigned int)app.ai_dialog_scroll_line);
+			}
 		}
 		else if(touch_event==APP_TOUCH_EVENT_NETWORK_RETRY)
 		{
